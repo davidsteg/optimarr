@@ -5,6 +5,8 @@ using System.Linq;
 using System.Text;
 using System.Diagnostics;
 using System.Xml.Linq;
+using Microsoft.EntityFrameworkCore;
+using Optimarr.Data;
 using Optimarr.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
@@ -16,35 +18,46 @@ namespace Optimarr.Services
         private readonly ReportGenerator _reportGenerator;
         private readonly ILogger<VideoAnalyzerService>? _logger;
         private readonly IConfiguration? _configuration;
+        private readonly AppDbContext? _dbContext;
         private readonly MediaPropertyRatingService? _mediaPropertyRatingService;
 
-        public VideoAnalyzerService(IConfiguration? configuration = null, ILogger<VideoAnalyzerService>? logger = null)
+        public VideoAnalyzerService(
+            IConfiguration? configuration = null,
+            ILogger<VideoAnalyzerService>? logger = null,
+            AppDbContext? dbContext = null)
         {
             _reportGenerator = new ReportGenerator();
             _logger = logger;
             _configuration = configuration;
+            _dbContext = dbContext;
             _mediaPropertyRatingService = new MediaPropertyRatingService(configuration, logger);
         }
 
 
-        public string AnalyzeVideo(string videoPath, string? subtitlePath = null)
+        public string AnalyzeVideo(string videoPath, string? subtitlePath = null, CancellationToken cancellationToken = default)
         {
             // Support both single subtitle path (legacy) and list of paths
             var subtitlePaths = subtitlePath != null ? new List<string> { subtitlePath } : new List<string>();
-            var (videoInfo, compatibilityResult) = AnalyzeVideoInternal(videoPath, subtitlePaths);
+            var (videoInfo, compatibilityResult) = AnalyzeVideoInternal(videoPath, subtitlePaths, cancellationToken);
             return _reportGenerator.GenerateReport(videoInfo, compatibilityResult);
         }
 
-        public (VideoInfo VideoInfo, CompatibilityResult CompatibilityResult) AnalyzeVideoStructured(string videoPath, string? subtitlePath = null)
+        public (VideoInfo VideoInfo, CompatibilityResult CompatibilityResult) AnalyzeVideoStructured(
+            string videoPath,
+            string? subtitlePath = null,
+            CancellationToken cancellationToken = default)
         {
             // Support both single subtitle path (legacy) and list of paths
             var subtitlePaths = subtitlePath != null ? new List<string> { subtitlePath } : new List<string>();
-            return AnalyzeVideoStructured(videoPath, subtitlePaths);
+            return AnalyzeVideoStructured(videoPath, subtitlePaths, cancellationToken);
         }
 
-        public (VideoInfo VideoInfo, CompatibilityResult CompatibilityResult) AnalyzeVideoStructured(string videoPath, List<string> subtitlePaths)
+        public (VideoInfo VideoInfo, CompatibilityResult CompatibilityResult) AnalyzeVideoStructured(
+            string videoPath,
+            List<string> subtitlePaths,
+            CancellationToken cancellationToken = default)
         {
-            return AnalyzeVideoInternal(videoPath, subtitlePaths);
+            return AnalyzeVideoInternal(videoPath, subtitlePaths, cancellationToken);
         }
 
         // Public method to recalculate compatibility from existing VideoInfo (without re-analyzing the file)
@@ -53,7 +66,10 @@ namespace Optimarr.Services
             return AnalyzeCompatibility(videoInfo);
         }
 
-        private (VideoInfo VideoInfo, CompatibilityResult CompatibilityResult) AnalyzeVideoInternal(string videoPath, List<string>? subtitlePaths = null)
+        private (VideoInfo VideoInfo, CompatibilityResult CompatibilityResult) AnalyzeVideoInternal(
+            string videoPath,
+            List<string>? subtitlePaths = null,
+            CancellationToken cancellationToken = default)
         {
             _logger?.LogInformation(">>> AnalyzeVideoInternal START: {VideoPath}", videoPath);
             
@@ -69,7 +85,7 @@ namespace Optimarr.Services
 
             _logger?.LogInformation(">>> Step 1: Extracting video information");
             var extractStartTime = DateTime.UtcNow;
-            var videoInfo = ExtractVideoInfo(videoPath);
+            var videoInfo = ExtractVideoInfo(videoPath, cancellationToken);
             var extractDuration = DateTime.UtcNow - extractStartTime;
             _logger?.LogInformation(">>> Video info extracted in {Duration}ms", extractDuration.TotalMilliseconds);
             _logger?.LogInformation("Extracted - Codec: {Codec}, Container: {Container}, Resolution: {Width}x{Height}, BitDepth: {BitDepth}, HDR: {HDR}",
@@ -124,7 +140,7 @@ namespace Optimarr.Services
             return (videoInfo, compatibilityResult);
         }
 
-        private VideoInfo ExtractVideoInfo(string filePath)
+        private VideoInfo ExtractVideoInfo(string filePath, CancellationToken cancellationToken = default)
         {
             _logger?.LogDebug("Extracting video information from: {FilePath}", filePath);
             
@@ -149,6 +165,8 @@ namespace Optimarr.Services
                 _logger?.LogError(">>> {Error}", error);
                 throw new InvalidOperationException(error);
             }
+
+            EnsurePathIsAllowed(filePath);
 
             // Check file permissions
             try
@@ -183,12 +201,13 @@ namespace Optimarr.Services
                 var processStartInfo = new ProcessStartInfo
                 {
                     FileName = "mediainfo",
-                    Arguments = $"--Output=XML \"{filePath}\"",
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
+                processStartInfo.ArgumentList.Add("--Output=XML");
+                processStartInfo.ArgumentList.Add(filePath);
                 
                 string xmlOutput;
                 string errorOutput;
@@ -199,10 +218,25 @@ namespace Optimarr.Services
                     {
                         throw new InvalidOperationException("Failed to start mediainfo process");
                     }
-                    
+
+                    using var registration = cancellationToken.Register(() =>
+                    {
+                        try
+                        {
+                            if (!process.HasExited)
+                            {
+                                process.Kill(entireProcessTree: true);
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore cancellation-time kill errors.
+                        }
+                    });
+
                     xmlOutput = process.StandardOutput.ReadToEnd();
                     errorOutput = process.StandardError.ReadToEnd();
-                    process.WaitForExit();
+                    process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
                     
                     var duration = DateTime.UtcNow - startTime;
                     _logger?.LogInformation(">>> mediainfo CLI completed in {Duration}ms, exit code: {ExitCode}", 
@@ -1343,6 +1377,60 @@ namespace Optimarr.Services
             }
 
             return _mediaPropertyRatingService.CalculateRating(videoInfo);
+        }
+
+        private void EnsurePathIsAllowed(string filePath)
+        {
+            var fullPath = Path.GetFullPath(filePath);
+            if (_dbContext == null)
+            {
+                _logger?.LogWarning(
+                    "Blocked media analysis because path whitelist cannot be validated without AppDbContext: {FilePath}",
+                    filePath);
+                throw new UnauthorizedAccessException("File path whitelist validation is unavailable.");
+            }
+
+            var configuredRoots = _dbContext.LibraryPaths
+                .AsNoTracking()
+                .Where(lp => lp.IsActive && !string.IsNullOrWhiteSpace(lp.Path))
+                .Select(lp => lp.Path)
+                .ToList();
+
+            if (configuredRoots.Count == 0)
+            {
+                _logger?.LogWarning(
+                    "Blocked media analysis because no active library roots are configured: {FilePath}",
+                    filePath);
+                throw new UnauthorizedAccessException("No configured library roots available for path validation.");
+            }
+
+            var isAllowed = configuredRoots.Any(root => IsPathUnderRoot(fullPath, root));
+            if (!isAllowed)
+            {
+                _logger?.LogWarning(
+                    "Blocked media analysis for path outside configured roots: {FilePath}",
+                    filePath);
+                throw new UnauthorizedAccessException("File path is outside configured library roots.");
+            }
+        }
+
+        private static bool IsPathUnderRoot(string filePath, string rootPath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || string.IsNullOrWhiteSpace(rootPath))
+            {
+                return false;
+            }
+
+            var fullFilePath = Path.GetFullPath(filePath)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var fullRootPath = Path.GetFullPath(rootPath)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            var fileWithSep = fullFilePath + Path.DirectorySeparatorChar;
+            var rootWithSep = fullRootPath + Path.DirectorySeparatorChar;
+
+            return fullFilePath.Equals(fullRootPath, StringComparison.OrdinalIgnoreCase)
+                || fileWithSep.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase);
         }
 
     }

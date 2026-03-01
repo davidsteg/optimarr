@@ -38,62 +38,10 @@ namespace Optimarr.Services
             // Start with a perfect score
             int rating = 100;
 
-            // Check video codec
-            var videoCodecSupported = IsVideoCodecSupported(videoInfo.VideoCodec, videoInfo.BitDepth, propertySettings);
-            if (!videoCodecSupported)
-            {
-                rating -= weights.UnsupportedVideoCodec;
-                issues.Add($"{videoInfo.VideoCodec} {videoInfo.BitDepth}-bit video codec is not supported");
-                recommendations.Add($"Re-encode to a supported video codec (e.g., H.264 8-bit)");
-            }
-
-            // Check container
-            var containerSupported = IsContainerSupported(videoInfo.Container, propertySettings);
-            if (!containerSupported)
-            {
-                rating -= weights.UnsupportedContainer;
-                issues.Add($"{videoInfo.Container} container is not supported");
-                recommendations.Add($"Use a supported container (e.g., MP4)");
-            }
-
-            // Check audio codecs
-            var unsupportedAudioCodecs = videoInfo.AudioTracks
-                .Where(track => !IsAudioCodecSupported(track.Codec, propertySettings))
-                .Select(track => track.Codec)
-                .Distinct()
-                .ToList();
-
-            if (unsupportedAudioCodecs.Any())
-            {
-                rating -= weights.UnsupportedAudioCodec;
-                var codecList = string.Join(", ", unsupportedAudioCodecs);
-                issues.Add($"{codecList} audio codec(s) are not supported");
-                recommendations.Add($"Use supported audio codecs (e.g., AAC)");
-            }
-
-            // Check subtitle formats
-            var unsupportedSubtitleFormats = videoInfo.SubtitleTracks
-                .Where(track => !IsSubtitleFormatSupported(track.Format, propertySettings))
-                .Select(track => track.Format)
-                .Distinct()
-                .ToList();
-
-            if (unsupportedSubtitleFormats.Any())
-            {
-                rating -= weights.UnsupportedSubtitleFormat;
-                var formatList = string.Join(", ", unsupportedSubtitleFormats);
-                issues.Add($"{formatList} subtitle format(s) are not supported");
-                recommendations.Add($"Use supported subtitle formats (e.g., SRT, VTT)");
-            }
-
-            // Check bit depth
-            var bitDepthSupported = IsBitDepthSupported(videoInfo.BitDepth, propertySettings);
-            if (!bitDepthSupported)
-            {
-                rating -= weights.UnsupportedBitDepth;
-                issues.Add($"{videoInfo.BitDepth}-bit depth is not supported");
-                recommendations.Add($"Use 8-bit depth for maximum compatibility");
-            }
+            rating -= ApplyCodecPenalty(videoInfo, propertySettings, weights, issues, recommendations);
+            rating -= ApplyContainerPenalty(videoInfo, propertySettings, weights, issues, recommendations);
+            rating -= ApplySubtitlePenalty(videoInfo, propertySettings, weights, issues, recommendations);
+            rating -= ApplyBitDepthPenalty(videoInfo, propertySettings, weights, issues, recommendations);
 
             // Check additional factors
             // Stereo sound (2 channels or less) - penalize only if ALL audio tracks are stereo
@@ -120,57 +68,7 @@ namespace Optimarr.Services
                 recommendations.Add("Consider HDR version for better visual quality");
             }
 
-            // High bitrate
-            if (videoInfo.FileSize > 0 && videoInfo.Duration > 0)
-            {
-                // Duration should be in seconds, but check if it might be in wrong unit
-                // Apply same correction logic as frontend to handle duration unit issues
-                var durationSeconds = videoInfo.Duration;
-                
-                // Calculate initial bitrate to check if duration unit is correct
-                var initialBps = (videoInfo.FileSize * 8.0) / durationSeconds;
-                var initialMbps = initialBps / 1000000.0;
-                
-                // If bitrate is unreasonably high (> 1000 Mbps), duration is likely in wrong unit
-                if (initialMbps > 1000.0)
-                {
-                    // Try different conversions based on duration value
-                    if (durationSeconds < 0.01)
-                    {
-                        // Very small - might be in microseconds, multiply by 1000
-                        durationSeconds = videoInfo.Duration * 1000.0;
-                    }
-                    else if (durationSeconds < 1.0)
-                    {
-                        // Less than 1 second - might be in milliseconds, divide by 1000
-                        durationSeconds = videoInfo.Duration / 1000.0;
-                    }
-                    else if (durationSeconds < 100.0)
-                    {
-                        // Small duration (1-100 seconds) but huge bitrate - maybe duration was incorrectly converted
-                        // Try multiplying by 1000 (reverse conversion if backend incorrectly converted milliseconds to seconds)
-                        var alternativeDuration = videoInfo.Duration * 1000.0;
-                        var alternativeBps = (videoInfo.FileSize * 8.0) / alternativeDuration;
-                        var alternativeMbps = alternativeBps / 1000000.0;
-                        
-                        if (alternativeMbps < 1000.0 && alternativeMbps > 0)
-                        {
-                            durationSeconds = alternativeDuration;
-                        }
-                    }
-                }
-                
-                // Recalculate bitrate with corrected duration
-                var bitrateMbps = (videoInfo.FileSize * 8.0) / (durationSeconds * 1000000.0);
-                
-                // Only flag as high bitrate if it's reasonable (not corrupted data)
-                if (bitrateMbps > weights.HighBitrateThresholdMbps && bitrateMbps < 1000.0)
-                {
-                    rating -= weights.HighBitrate;
-                    issues.Add($"High bitrate ({bitrateMbps:F2} Mbps) may cause buffering on slower connections");
-                    recommendations.Add("Consider reducing bitrate for better streaming performance");
-                }
-            }
+            rating -= ApplyBitratePenalty(videoInfo, weights, issues, recommendations);
 
             // Incorrect codec tag
             if (!videoInfo.IsCodecTagCorrect && !string.IsNullOrEmpty(videoInfo.VideoCodecTag))
@@ -180,16 +78,7 @@ namespace Optimarr.Services
                 recommendations.Add("Fix codec tag to ensure proper playback");
             }
 
-            // Fast start optimization (MP4 only)
-            var isMp4Container = string.Equals(videoInfo.Container, "MP4", StringComparison.OrdinalIgnoreCase) ||
-                                  string.Equals(videoInfo.Container, "M4V", StringComparison.OrdinalIgnoreCase) ||
-                                  string.Equals(videoInfo.Container, "MOV", StringComparison.OrdinalIgnoreCase);
-            if (isMp4Container && !videoInfo.IsFastStart)
-            {
-                rating -= weights.FastStart;
-                issues.Add("MP4 file lacks fast start optimization (moov atom not at beginning)");
-                recommendations.Add("Re-encode with fast start flag (-movflags +faststart) for better streaming performance");
-            }
+            rating -= ApplyFastStartBonus(videoInfo, weights, issues, recommendations);
 
             // Ensure rating doesn't go below 0
             rating = Math.Max(0, rating);
@@ -209,6 +98,181 @@ namespace Optimarr.Services
             result.Recommendations = recommendations;
 
             return result;
+        }
+
+        private int ApplyCodecPenalty(
+            VideoInfo videoInfo,
+            MediaPropertySettings propertySettings,
+            RatingWeights weights,
+            List<string> issues,
+            List<string> recommendations)
+        {
+            var penalty = 0;
+
+            var videoCodecSupported = IsVideoCodecSupported(videoInfo.VideoCodec, videoInfo.BitDepth, propertySettings);
+            if (!videoCodecSupported)
+            {
+                penalty += weights.UnsupportedVideoCodec;
+                issues.Add($"{videoInfo.VideoCodec} {videoInfo.BitDepth}-bit video codec is not supported");
+                recommendations.Add("Re-encode to a supported video codec (e.g., H.264 8-bit)");
+            }
+
+            var unsupportedAudioCodecs = videoInfo.AudioTracks
+                .Where(track => !IsAudioCodecSupported(track.Codec, propertySettings))
+                .Select(track => track.Codec)
+                .Distinct()
+                .ToList();
+
+            if (unsupportedAudioCodecs.Any())
+            {
+                penalty += weights.UnsupportedAudioCodec;
+                var codecList = string.Join(", ", unsupportedAudioCodecs);
+                issues.Add($"{codecList} audio codec(s) are not supported");
+                recommendations.Add("Use supported audio codecs (e.g., AAC)");
+            }
+
+            return penalty;
+        }
+
+        private int ApplyContainerPenalty(
+            VideoInfo videoInfo,
+            MediaPropertySettings propertySettings,
+            RatingWeights weights,
+            List<string> issues,
+            List<string> recommendations)
+        {
+            var containerSupported = IsContainerSupported(videoInfo.Container, propertySettings);
+            if (!containerSupported)
+            {
+                issues.Add($"{videoInfo.Container} container is not supported");
+                recommendations.Add("Use a supported container (e.g., MP4)");
+                return weights.UnsupportedContainer;
+            }
+
+            return 0;
+        }
+
+        private int ApplySubtitlePenalty(
+            VideoInfo videoInfo,
+            MediaPropertySettings propertySettings,
+            RatingWeights weights,
+            List<string> issues,
+            List<string> recommendations)
+        {
+            var unsupportedSubtitleFormats = videoInfo.SubtitleTracks
+                .Where(track => !IsSubtitleFormatSupported(track.Format, propertySettings))
+                .Select(track => track.Format)
+                .Distinct()
+                .ToList();
+
+            if (unsupportedSubtitleFormats.Any())
+            {
+                var formatList = string.Join(", ", unsupportedSubtitleFormats);
+                issues.Add($"{formatList} subtitle format(s) are not supported");
+                recommendations.Add("Use supported subtitle formats (e.g., SRT, VTT)");
+                return weights.UnsupportedSubtitleFormat;
+            }
+
+            return 0;
+        }
+
+        private int ApplyBitDepthPenalty(
+            VideoInfo videoInfo,
+            MediaPropertySettings propertySettings,
+            RatingWeights weights,
+            List<string> issues,
+            List<string> recommendations)
+        {
+            var bitDepthSupported = IsBitDepthSupported(videoInfo.BitDepth, propertySettings);
+            if (!bitDepthSupported)
+            {
+                issues.Add($"{videoInfo.BitDepth}-bit depth is not supported");
+                recommendations.Add("Use 8-bit depth for maximum compatibility");
+                return weights.UnsupportedBitDepth;
+            }
+
+            return 0;
+        }
+
+        private int ApplyBitratePenalty(
+            VideoInfo videoInfo,
+            RatingWeights weights,
+            List<string> issues,
+            List<string> recommendations)
+        {
+            if (videoInfo.FileSize <= 0 || videoInfo.Duration <= 0)
+            {
+                return 0;
+            }
+
+            // Duration should be in seconds, but check if it might be in wrong unit
+            // Apply same correction logic as frontend to handle duration unit issues
+            var durationSeconds = videoInfo.Duration;
+
+            // Calculate initial bitrate to check if duration unit is correct
+            var initialBps = (videoInfo.FileSize * 8.0) / durationSeconds;
+            var initialMbps = initialBps / 1000000.0;
+
+            // If bitrate is unreasonably high (> 1000 Mbps), duration is likely in wrong unit
+            if (initialMbps > 1000.0)
+            {
+                // Try different conversions based on duration value
+                if (durationSeconds < 0.01)
+                {
+                    // Very small - might be in microseconds, multiply by 1000
+                    durationSeconds = videoInfo.Duration * 1000.0;
+                }
+                else if (durationSeconds < 1.0)
+                {
+                    // Less than 1 second - might be in milliseconds, divide by 1000
+                    durationSeconds = videoInfo.Duration / 1000.0;
+                }
+                else if (durationSeconds < 100.0)
+                {
+                    // Small duration (1-100 seconds) but huge bitrate - maybe duration was incorrectly converted
+                    // Try multiplying by 1000 (reverse conversion if backend incorrectly converted milliseconds to seconds)
+                    var alternativeDuration = videoInfo.Duration * 1000.0;
+                    var alternativeBps = (videoInfo.FileSize * 8.0) / alternativeDuration;
+                    var alternativeMbps = alternativeBps / 1000000.0;
+
+                    if (alternativeMbps < 1000.0 && alternativeMbps > 0)
+                    {
+                        durationSeconds = alternativeDuration;
+                    }
+                }
+            }
+
+            // Recalculate bitrate with corrected duration
+            var bitrateMbps = (videoInfo.FileSize * 8.0) / (durationSeconds * 1000000.0);
+
+            // Only flag as high bitrate if it's reasonable (not corrupted data)
+            if (bitrateMbps > weights.HighBitrateThresholdMbps && bitrateMbps < 1000.0)
+            {
+                issues.Add($"High bitrate ({bitrateMbps:F2} Mbps) may cause buffering on slower connections");
+                recommendations.Add("Consider reducing bitrate for better streaming performance");
+                return weights.HighBitrate;
+            }
+
+            return 0;
+        }
+
+        private int ApplyFastStartBonus(
+            VideoInfo videoInfo,
+            RatingWeights weights,
+            List<string> issues,
+            List<string> recommendations)
+        {
+            var isMp4Container = string.Equals(videoInfo.Container, "MP4", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(videoInfo.Container, "M4V", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(videoInfo.Container, "MOV", StringComparison.OrdinalIgnoreCase);
+            if (isMp4Container && !videoInfo.IsFastStart)
+            {
+                issues.Add("MP4 file lacks fast start optimization (moov atom not at beginning)");
+                recommendations.Add("Re-encode with fast start flag (-movflags +faststart) for better streaming performance");
+                return weights.FastStart;
+            }
+
+            return 0;
         }
 
         private bool IsVideoCodecSupported(string codec, int bitDepth, MediaPropertySettings settings)

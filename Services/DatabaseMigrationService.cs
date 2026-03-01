@@ -256,8 +256,8 @@ namespace Optimarr.Services
             {
                 _logger.LogError(ex, "Error during database migration");
                 progress.Status = "error";
-                progress.Message = $"Migration failed: {ex.Message}";
-                progress.Error = ex.ToString(); // Store full error details
+                progress.Message = "Migration failed. Check logs for details.";
+                progress.Error = "An internal error occurred. Check logs for details.";
                 progress.EndTime = DateTime.UtcNow;
                 throw;
             }
@@ -959,7 +959,7 @@ COMMIT;";
 
                 // Get the correct logger type for VideoAnalyzerService
                 var videoAnalyzerLogger = scope.ServiceProvider.GetService<ILogger<VideoAnalyzerService>>();
-                var videoAnalyzer = new VideoAnalyzerService(configuration, videoAnalyzerLogger);
+                var videoAnalyzer = new VideoAnalyzerService(configuration, videoAnalyzerLogger, dbContext);
                 var updatedCount = 0;
                 var errorCount = 0;
 

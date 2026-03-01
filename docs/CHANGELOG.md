@@ -8,6 +8,181 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed
+- Prepared release version `1.2.1` across runtime/build metadata.
+  - Updated `VERSION` to `1.2.1`.
+  - Updated `optimarr.csproj` Version/AssemblyVersion/FileVersion to `1.2.1`.
+  - Updated Docker image OCI label `org.opencontainers.image.version` to `1.2.1`.
+- Applied release-policy exception alignment for Security `S1` (2026-03-01).
+  - Documented owner decision that Sonarr key rotation is deferred ("the key will stay"), replacing prior hard NO-GO wording with explicit accepted-risk framing.
+  - Updated `docs/TASKS.md` release-gate note to `GO with explicit owner-accepted security exception`.
+  - Updated `S1` task state from `❌` to `⚠️` with residual-risk wording (policy exception, not technical closure).
+  - Synced Progress Snapshot counts to reflect Security `8 done / 1 partial / 0 not started` and global totals `69 done / 1 partial / 0 not started`.
+- QA targeted regression confirmation completed for already-closed items (`S6`, `S8`) on 2026-03-01.
+  - `S6` scenario outcomes remain consistent in current code:
+    - file under active root => allowed flow,
+    - file outside active root => blocked (`UnauthorizedAccessException`),
+    - no active roots configured => blocked (`UnauthorizedAccessException`).
+  - `S8` remains closed on regression check:
+    - updated controller/global `500` payloads are sanitized,
+    - no response-body construction using `ex.Message` or stack trace text found in controllers.
+  - No S8 regression evidence detected in this pass.
+- Security Agent S1 closure-only revalidation pass completed (2026-03-01) with **NO-GO** retained.
+  - Required ordered probes run:
+    - old exposed key (`fcdc264436ef4b5b83e16fa5dc186cfd`) -> `200`
+    - rotated/new key probe -> `NO_NEW_KEY_EVIDENCE` (no concrete new key available for `200` validation)
+  - Decision rule not satisfied (`new key` != `200` and old key != `401`), so S1 remains open.
+- Security Agent S1 hard-evidence revalidation rerun completed (2026-03-01) with **NO-GO** retained.
+  - Live Sonarr status probes this pass:
+    - no key -> `401`
+    - old exposed key (`fcdc264436ef4b5b83e16fa5dc186cfd`) -> `200`
+  - New-key proof remains unavailable in this pass (`NO_NEW_KEY_EVIDENCE`), so S1 closure criteria are not met.
+  - Tracked runtime config remains secret-safe (placeholder-only Sonarr values in `config/appsettings.json`).
+- Security Agent S1 closure revalidation rerun completed (2026-03-01) with **NO-GO** retained.
+  - Live Sonarr probes: no-key request to `/api/v3/system/status` returned `401` (expected), but old exposed key still returned `200`.
+  - Required closure evidence for S1 remains missing: no validated replacement/new-key `200` probe was available in this pass.
+  - Tracked config hygiene remains compliant: no real API key values detected in tracked JSON config files; `config/appsettings.json` remains placeholder-only.
+  - S8 remains PASS on revalidation: no `ex.Message`/stack-trace response payload leakage patterns found in controller response construction.
+- QA Agent release-gate validation executed for `S6`/`S8` scope (2026-03-01).
+  - Executed required commands: `dotnet restore`, `dotnet build -c Release`, `dotnet test`.
+  - All three commands failed in this environment with `No .NET SDKs were found`, so runtime endpoint sign-off remains pending SDK-enabled execution.
+  - Code-level scenario checks for `S6` pass: under-active-root path flow is allowed; outside-root and no-active-roots paths are explicitly blocked in `VideoAnalyzerService.EnsurePathIsAllowed`.
+  - Code-level payload checks for `S8` pass: current controller/global error responses are sanitized and no `ex.Message`/stack-trace response leakage patterns are present.
+- Code Review Agent re-reviewed only `S8/S6` gate scope (2026-03-01).
+  - Confirmed no internal exception details are returned in controller API response payloads.
+  - Confirmed `S6` remains unchanged in intent: library-root path allowlist + `ArgumentList`-based MediaInfo execution.
+  - Recommended task state: set `S8` to `✅` (complete) while `S1` remains the independent release blocker.
+- Security release-gate revalidation completed by Security Agent with **NO-GO** retained (2026-03-01).
+  - S1 still fails closure criteria: old exposed Sonarr key (`fcdc264436ef4b5b83e16fa5dc186cfd`) still returns `200` on `/api/v3/system/status`.
+  - Required S1 evidence remains incomplete because replacement-key success proof was not provided in this gate pass.
+  - Runtime/repo secret hygiene remains compliant (`config/appsettings.json` Sonarr values are placeholders only).
+  - S8 revalidation passed: no `ex.Message`/stack-trace content detected in controller API payload construction paths.
+- Security release-gate follow-up completed by Security Agent with **NO-GO** decision (2026-03-01).
+  - Out-of-band Sonarr validation shows the previously exposed API key is still active (`GET /api/v3/system/status` returns `200` when called with old key), so `S1` remains blocking until key rotation + revocation are confirmed.
+  - Repository/runtime config hygiene is now correct for tracked values: `config/appsettings.json` uses placeholder Sonarr credentials (empty `BaseUrl`/`ApiKey`, `Enabled: false`).
+  - `S6` remains approved: MediaInfo call path enforces library-root whitelist and uses safe `ArgumentList` process invocation.
+  - `S8` is now closed: production API error payloads have been normalized to sanitized client-safe messages while preserving detailed exception context in logs.
+- Code Review release-gate pass completed for Security tasks `S6`/`S8` and config secret hygiene.
+  - Confirmed `S6` hardening is effective: MediaInfo execution path now validates file paths against configured library roots before process start and uses `ProcessStartInfo.ArgumentList` for argument safety.
+  - Confirmed tracked runtime config secret hygiene: `config/appsettings.json` uses placeholder Sonarr credentials (empty `BaseUrl`/`ApiKey`, `Enabled: false`).
+  - Confirmed `S8` closure: no remaining `ex.Message`/`Exception.ToString()` content is returned in production API error payloads.
+- Implemented security hardening fixes for S6 and S8.
+  - Enforced strict library-root whitelist validation in `VideoAnalyzerService` before MediaInfo invocation (analysis is blocked when path cannot be validated or no active roots are configured).
+  - Switched MediaInfo process argument handling to `ProcessStartInfo.ArgumentList` to avoid unsafe argument-string composition.
+  - Added global exception handling middleware in `Program.cs` that logs server-side and returns sanitized JSON errors (`{ "error": "..." }`) for unhandled API exceptions.
+  - Normalized `AnalysisController`, `LibraryController`, and `PlaybackController` 500 responses to avoid returning raw exception messages.
+  - Completed follow-up normalization for remaining client-facing error paths in controller/service-originated payloads (`ServarrController` progress failure path, `ServarrSyncService` result messages, and migration error payload fields in `DatabaseMigrationService`).
+- Removed real Sonarr credential values from tracked runtime config.
+  - Reset `config/appsettings.json` Sonarr `BaseUrl` and `ApiKey` to placeholders and set `Enabled` to `false`.
+  - Operational key rotation is still required out-of-band (tracked as `S1`) due to prior exposure.
+- Fixed Docker publish/build picking up test sources from `Optimarr.Tests` when building `optimarr.csproj`.
+  - Updated `optimarr.csproj` to exclude `Optimarr.Tests/**` from `Compile`/`Content`/`None`/`EmbeddedResource` item globs.
+  - Added defensive cleanup in `Dockerfile` build stage (`rm -rf ./Optimarr.Tests`) before `dotnet publish` to prevent nested test sources from being compiled in container builds.
+  - Prevents CS0246/CS0234 failures in container builds caused by test-only dependencies (`xUnit`, `Moq`, `Microsoft.AspNetCore.TestHost`) not referenced by the app project.
+- Implemented Servarr service abstraction from architect plan A1.
+  - Added `IServarrService`, `ISonarrService`, `IRadarrService`, shared `ServarrRootFolder`, and `ServarrServiceBase`.
+  - Refactored `SonarrService` and `RadarrService` to inherit the base class while keeping provider-specific APIs.
+  - Updated DI registrations in `Program.cs` to expose concrete services and interface mappings.
+  - Updated `ServarrSyncService` and `VideoServarrMatcherService` to consume interface-based dependencies.
+- Completed remaining Execution backlog status updates in `docs/TASKS.md`.
+  - Marked E5/E6/E8/E9/E10 as done and synced Execution/TOTAL snapshot counters.
+- Refactored rating and Servarr matching internals for maintainability without changing API contracts.
+  - Decomposed `MediaPropertyRatingService.CalculateRating()` into focused penalty helpers.
+  - Split `VideoServarrMatcherService` preload and batch logic into `PreloadSonarrDataAsync`, `PreloadRadarrDataAsync`, `MatchVideoBatchAsync`, and shared `MatchVideosCoreAsync`.
+  - Consolidated full-library and library-path matching paths onto the same shared matching core.
+- Simplified Servarr controller configuration handling.
+  - Added `ConfigKeys` constants in `ServarrController` to remove repeated string literals.
+  - Replaced duplicated Sonarr/Radarr save implementations with shared provider-based helpers using guard clauses.
+- Added cancellation support and typed options wiring for service initialization.
+  - Added optional `CancellationToken` parameters to `VideoAnalyzerService` public analyze methods and threaded cancellation into media process wait via `WaitForExitAsync`.
+  - Added typed `ServarrOptions` binding and moved `SonarrService` / `RadarrService` initialization from inline `IConfiguration` keys to `IOptionsMonitor<ServarrOptions>`.
+- Expanded runtime configuration documentation in `config/README.md`.
+  - Added explicit coverage for `MatchingOptions` throughput keys (`SeriesConcurrency`, `MovieConcurrency`, `VideoBatchSize`, `SaveBatchSize`, `MaxMatchConcurrency`).
+  - Documented `Cors:AllowedOrigins` behavior and safe defaults.
+  - Documented `Auth:ApiKey` behavior and `X-Optimarr-Key` requirement when auth is enabled.
+- Added a concise API reference table to `README.md` for the most-used endpoints.
+  - Included analyze, scan, Servarr status, playback history, and system health examples.
+- Expanded Docker troubleshooting guidance in `DOCKER.md`.
+  - Added steps for failing health checks, log collection, database reset, live config updates, and mounted-volume permission issues.
+- Added Swagger XML summaries across controller action methods.
+  - Added one-line `/// <summary>` comments to all HTTP actions in `AnalysisController`, `LibraryController`, `PlaybackController`, `ServarrController`, and `SystemController`.
+- Updated `docs/AGENTS_GUIDE.md` for consistency after moving agent artifacts into `docs/`.
+  - Normalized artifact references to `docs/PROJECT_CONTEXT.md`, `docs/MEMORY.md`, and `docs/PLAN.md` across trigger phrases, inputs, outputs, and checklists.
+  - Updated Security Agent assumptions to reflect current behavior: optional API-key-protected API and configured CORS allowlist logic.
+  - Kept the global rule that all file-changing tasks must include a `docs/CHANGELOG.md` update.
+- Updated `docs/TASKS.md` to reflect current workspace state and completed items.
+  - Synced task references to `docs/...` artifact paths after documentation file moves.
+  - Refreshed current branch-state snapshot with active modified/untracked files.
+  - Marked already-implemented tasks as done/partial (PathNormalizer helper, URL/path-mapping validation, CORS hardening, API key masking, middleware auth).
+- Reconciled the `Progress Snapshot` totals in `docs/TASKS.md` so Done/Partial/Not Started counts now exactly match the per-task statuses.
+- Audited `docs/` for merge candidates and consistency.
+  - No file merges were required; documents are distinct by role (contracts, plans, reviews, tracking).
+  - Fixed remaining internal path references to canonical `docs/...` locations in `docs/REVIEW_R8.md`, `docs/REVIEW_R9.md`, `docs/PLAN.md`, and `docs/MEMORY.md`.
+- Updated container startup/health behavior and development Docker workflow.
+  - Added `GET /api/system/ready` that returns `503` until database migration completes.
+  - Exposed `/api/system/migration` and `/api/system/ready` as API-key middleware public paths for container probing.
+  - Made `Dockerfile` health check migration-aware and explicitly copied `VERSION` into runtime image for version endpoint consistency.
+  - Reworked `Dockerfile.dev` + `docker-compose.dev.yml` to use internal port `8080`, non-root `optimarr` user (UID 1000), bind-mounted `config/data/logs`, and `dotnet watch` hot reload.
+  - Updated `DOCKER.md` and `config/README.md` with current development-container usage and environment variables.
+- Updated `docs/AGENTS_GUIDE.md` to require agent reports for easier review.
+  - Added a global non-negotiable rule: every agent invocation must write a report `.md` file in `docs/reports/`.
+  - Standardized report naming as `docs/reports/REPORT_<AGENT>_<YYYY-MM-DD>.md`.
+  - Extended the handoff template with a required `Report File` field.
+- Added `docs/reports/REPORT_TEMPLATE.md` as a shared, minimal report format for all agents.
+  - Includes scope, actions, findings (blocking/warning/approved), artifacts, open issues, and verification sections.
+- Added a new feature-pack backlog block to `docs/TASKS.md` for:
+  - Quality Regression Alerts
+  - Playback-Aware Scoring
+  - Cron Jobs / Scheduler
+  - Includes agent-specific task breakdowns (BA through Docs) and dependencies.
+- Added a short feature-pack “Suggested Execution Order” to `docs/TASKS.md` with phased rollout steps (Define → Architect → Implement → API/Config/UI → Review/Test → Stabilize/Operate → Polish/Docs).
+- Created `docs/reports/` as the dedicated folder for all agent report markdown files.
+- Moved and standardized report-like markdown files into `docs/reports/`.
+  - Renamed review/notes/report files to `REPORT_*` format for consistency.
+  - Updated report path references in `docs/AGENTS_GUIDE.md`, `docs/TASKS.md`, and moved report files.
+- Enforced dedicated per-agent report files in `docs/reports/`.
+  - Updated `docs/AGENTS_GUIDE.md` to require each agent to append reports to its own dedicated `.md` file.
+  - Updated `docs/reports/REPORT_TEMPLATE.md` to use dated sections inside dedicated files.
+  - Added dedicated files: `REPORT_BA_AGENT.md`, `REPORT_ARCHITECT_AGENT.md`, `REPORT_EXECUTION_AGENT.md`, `REPORT_CODE_REVIEW_AGENT.md`, `REPORT_QA_AGENT.md`, `REPORT_DEBUGGER_AGENT.md`, `REPORT_DEVOPS_AGENT.md`, `REPORT_SECURITY_AGENT.md`, `REPORT_REFACTOR_AGENT.md`, `REPORT_DOCUMENTATION_AGENT.md`.
+- Cleaned up and merged report files by agent in `docs/reports/`.
+  - Merged dated report content into dedicated files for BA, Code Review, DevOps, and Refactor agents.
+  - Removed redundant dated report files after consolidation.
+  - Updated `docs/TASKS.md` branch-state note to reflect consolidated dedicated report files.
+- Updated `docs/TASKS.md` tracker wording for current state accuracy.
+  - Marked the historical `.gitignore` typo item as resolved context instead of active bug.
+  - Synced current-branch notes to include completed report-governance scaffolding in `docs/reports/`.
+- Recounted task progress in `docs/TASKS.md` from completed agent items and updated status tables.
+  - Updated `Progress Snapshot` totals to: Done `47`, Partial `2`, Not Started `21` (total `70`).
+  - Added explicit status column entries for Agent 4 review tasks (`R1-R8`) and marked them complete based on completed review artifacts.
+- Added a BA follow-up validation entry to `docs/reports/REPORT_BA_AGENT.md`.
+  - Captures latest `B1-B4` status re-check findings against `docs/PROJECT_CONTEXT.md` and `docs/MEMORY.md`.
+  - Notes that `IServarrService` now exists in code and `B2` is no longer code-blocked (pending doc alignment).
+- Completed BA contract alignment updates in `docs/PROJECT_CONTEXT.md` and tracker promotion in `docs/TASKS.md`.
+  - Added explicit forbidden-commit guidance for real credentials in `config/appsettings.json` with production env/runtime secret injection policy.
+  - Added an architecture rule to use `IServarrService` abstraction for shared Servarr behavior.
+  - Added a Definition of Done check to avoid unextracted magic numbers in new code.
+  - Updated BA task statuses `B1`, `B2`, and `B4` to complete in `docs/TASKS.md`.
+- Appended a BA completion-pass entry to `docs/reports/REPORT_BA_AGENT.md` documenting closure of `B1/B2/B4`.
+- Reconciled `docs/TASKS.md` Progress Snapshot counters after BA status promotions.
+  - Updated BA row from `1/1/2` to `4/0/0` (Done/Partial/Not Started).
+  - Updated global totals from `52/2/16` to `55/1/14` (total tasks unchanged at `70`).
+- Synced `docs/TASKS.md` narrative text with dedicated agent report progress.
+  - Updated the report-governance branch-state note to reflect which agent report files currently have active dated sections.
+  - Corrected Debugger task `D1` wording to reflect completed DevOps verification (`V1`) instead of marking it pending.
+- Closed remaining Debugger backlog tasks (`D2`–`D5`) with targeted root-cause fixes and telemetry.
+  - Removed the Sonarr `FindEpisodeByPath()` N+1 fan-out by bulk-loading episode files once and resolving by dictionary lookup.
+  - Corrected Sonarr preload episode-file mapping key usage in matcher cache building (`EpisodeFileId` now maps to episode file `Id`).
+  - Mitigated `ReloadConfiguration()` race risk by using copy-on-swap `HttpClient` reinitialization in `ServarrServiceBase` instead of mutating a shared live client.
+  - Added preload memory delta logging in `VideoServarrMatcherService` and made final `SaveChangesAsync()` conditional on pending tracked changes.
+- Reconciled docs with current security reality after verification against runtime config/code.
+  - `docs/TASKS.md` now marks `E2` and `R2` as partial (secret still present in `config/appsettings.json`).
+  - `docs/TASKS.md` now marks `S8` as partial due to remaining controller-level `ex.Message` responses.
+  - Added explicit release gate note: release remains blocked by open security findings (see `docs/reports/REPORT_SECURITY_AGENT.md`).
+
+---
+
 ## [1.2.0] - 2026-01-11
 
 ### Changed - Major Architecture Update

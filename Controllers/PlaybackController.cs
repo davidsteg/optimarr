@@ -179,6 +179,9 @@ namespace Optimarr.Controllers
             };
         }
 
+        /// <summary>
+        /// Returns Jellyfin integration enablement and connectivity status.
+        /// </summary>
         [HttpGet("status")]
         public ActionResult<object> GetStatus()
         {
@@ -189,6 +192,9 @@ namespace Optimarr.Controllers
             });
         }
 
+        /// <summary>
+        /// Returns persisted Jellyfin settings (password value is never returned).
+        /// </summary>
         [HttpGet("settings")]
         public ActionResult<object> GetJellyfinSettings()
         {
@@ -202,6 +208,9 @@ namespace Optimarr.Controllers
             });
         }
 
+        /// <summary>
+        /// Saves Jellyfin configuration settings to the runtime appsettings file.
+        /// </summary>
         [HttpPost("settings")]
         public async Task<ActionResult> SaveJellyfinSettings([FromBody] JellyfinSettingsRequest request)
         {
@@ -304,10 +313,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error saving Jellyfin settings");
-                return StatusCode(500, new { error = $"Failed to save Jellyfin settings: {ex.Message}" });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Tests Jellyfin connectivity using the supplied connection settings.
+        /// </summary>
         [HttpPost("test")]
         public async Task<ActionResult> TestJellyfinConnection([FromBody] TestJellyfinConnectionRequest request)
         {
@@ -366,10 +378,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error testing Jellyfin connection");
-                return StatusCode(500, new { success = false, message = ex.Message });
+                return StatusCode(500, new { success = false, message = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Synchronizes playback history from Jellyfin into the local database.
+        /// </summary>
         [HttpPost("sync")]
         public async Task<ActionResult<object>> SyncPlaybackHistory([FromQuery] int? days = null)
         {
@@ -483,7 +498,7 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error syncing playback history");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
@@ -669,6 +684,9 @@ namespace Optimarr.Controllers
             return false;
         }
 
+        /// <summary>
+        /// Returns aggregated playback statistics for dashboard and reporting views.
+        /// </summary>
         [HttpGet("statistics")]
         public async Task<ActionResult<object>> GetPlaybackStatistics([FromQuery] int? libraryPathId = null)
         {
@@ -724,10 +742,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting playback statistics");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns client and device names observed in playback history records.
+        /// </summary>
         [HttpGet("clients/used")]
         public async Task<ActionResult<object>> GetUsedClients()
         {
@@ -769,10 +790,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting used clients");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns paged playback history with optional filtering and sorting.
+        /// </summary>
         [HttpGet("history")]
         public async Task<ActionResult<object>> GetPlaybackHistory(
             [FromQuery] int page = 1,
@@ -900,10 +924,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting playback history");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns playback history entries associated with a specific analyzed video.
+        /// </summary>
         [HttpGet("history/video/{videoId}")]
         public async Task<ActionResult<object>> GetPlaybackHistoryForVideo(int videoId)
         {
@@ -946,10 +973,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting playback history for video {VideoId}", videoId);
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Re-runs playback-to-video matching for unmatched playback records.
+        /// </summary>
         [HttpPost("rematch")]
         public async Task<ActionResult<object>> RematchPlaybackHistory()
         {
@@ -1001,7 +1031,7 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error re-matching playback history");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
     }

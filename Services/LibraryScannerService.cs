@@ -152,7 +152,7 @@ namespace Optimarr.Services
                             if (failedScan != null)
                             {
                                 failedScan.Status = ScanStatus.Failed;
-                                failedScan.ErrorMessage = $"Background task error: {ex.Message}";
+                                failedScan.ErrorMessage = "An internal error occurred. Check logs for details.";
                                 failedScan.CompletedAt = DateTime.UtcNow;
                                 await errorDbContext.SaveChangesAsync();
                                 _logger.LogInformation(">>> BACKGROUND TASK: Scan status updated to Failed for scan ID: {ScanId}", scanIdForTask);
@@ -625,7 +625,7 @@ namespace Optimarr.Services
                     if (failedScan != null)
                     {
                         failedScan.Status = ScanStatus.Failed;
-                        failedScan.ErrorMessage = $"{ex.GetType().Name}: {ex.Message}";
+                        failedScan.ErrorMessage = "An internal error occurred. Check logs for details.";
                         failedScan.CompletedAt = DateTime.UtcNow;
                         await dbContext.SaveChangesAsync();
                         _logger.LogInformation("Scan failure saved to database");
@@ -854,7 +854,7 @@ namespace Optimarr.Services
                         FileName = Path.GetFileName(filePath),
                         FileSize = File.Exists(filePath) ? new FileInfo(filePath).Length : 0,
                         IsBroken = true,
-                        BrokenReason = $"{ex.GetType().Name}: {ex.Message}",
+                        BrokenReason = "An internal error occurred. Check logs for details.",
                         OverallScore = CompatibilityScore.Unknown,
                         AnalyzedAt = DateTime.UtcNow,
                         LibraryScanId = scanId

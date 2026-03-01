@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Optimarr.Data;
+using Optimarr.Helpers;
 using Optimarr.Models;
 
 namespace Optimarr.Services
@@ -9,15 +10,15 @@ namespace Optimarr.Services
     public class ServarrSyncService
     {
         private readonly AppDbContext _dbContext;
-        private readonly RadarrService _radarrService;
-        private readonly SonarrService _sonarrService;
+        private readonly IRadarrService _radarrService;
+        private readonly ISonarrService _sonarrService;
         private readonly ILogger<ServarrSyncService> _logger;
         private readonly IConfiguration _configuration;
 
         public ServarrSyncService(
             AppDbContext dbContext,
-            RadarrService radarrService,
-            SonarrService sonarrService,
+            IRadarrService radarrService,
+            ISonarrService sonarrService,
             ILogger<ServarrSyncService> logger,
             IConfiguration configuration)
         {
@@ -48,7 +49,7 @@ namespace Optimarr.Services
                 _logger.LogInformation("Starting Radarr library sync");
 
                 // Get root folders from Radarr
-                var rootFolders = await _radarrService.GetRootFolders();
+                var rootFolders = await _radarrService.GetRootFoldersAsync();
                 result.RootFoldersFound = rootFolders.Count;
 
                 // Skip movies fetch for performance - it's only used for counting which is not critical
@@ -76,7 +77,7 @@ namespace Optimarr.Services
                 // Pre-normalize and index all existing paths
                 foreach (var path in existingPaths)
                 {
-                    var normalized = NormalizePath(path.Path);
+                    var normalized = PathNormalizer.Normalize(path.Path);
                     if (!pathsByNormalizedPath.ContainsKey(normalized))
                     {
                         pathsByNormalizedPath[normalized] = path;
@@ -100,7 +101,7 @@ namespace Optimarr.Services
                         continue;
                     }
 
-                    var normalizedRootPath = NormalizePath(rootFolder.Path);
+                    var normalizedRootPath = PathNormalizer.Normalize(rootFolder.Path);
                     
                     // O(1) lookup: Check by root folder ID first (most specific), then by normalized path
                     LibraryPath? existingPath = null;
@@ -118,8 +119,8 @@ namespace Optimarr.Services
                     {
                         // Map the path if mappings are configured (update if path changed)
                         var mappedPath = MapPath(rootFolder.Path, "Radarr");
-                        var normalizedMappedPath = NormalizePath(mappedPath);
-                        var normalizedExistingPath = NormalizePath(existingPath.Path);
+                        var normalizedMappedPath = PathNormalizer.Normalize(mappedPath);
+                        var normalizedExistingPath = PathNormalizer.Normalize(existingPath.Path);
                         
                         if (normalizedExistingPath != normalizedMappedPath)
                         {
@@ -148,7 +149,7 @@ namespace Optimarr.Services
                     {
                         // Map the path if mappings are configured
                         var mappedPath = MapPath(rootFolder.Path, "Radarr");
-                        var normalizedMappedPath = NormalizePath(mappedPath);
+                        var normalizedMappedPath = PathNormalizer.Normalize(mappedPath);
                         
                         // Create new library path
                         var newPath = new LibraryPath
@@ -201,7 +202,7 @@ namespace Optimarr.Services
             {
                 _logger.LogError(ex, "Error syncing Radarr library");
                 result.Success = false;
-                result.Message = $"Error: {ex.Message}";
+                result.Message = "An internal error occurred. Check logs for details.";
                 result.CompletedAt = DateTime.UtcNow;
                 result.Duration = result.CompletedAt.Value - result.StartedAt;
             }
@@ -229,7 +230,7 @@ namespace Optimarr.Services
                 _logger.LogInformation("Starting Sonarr library sync");
 
                 // Get root folders from Sonarr
-                var rootFolders = await _sonarrService.GetRootFolders();
+                var rootFolders = await _sonarrService.GetRootFoldersAsync();
                 result.RootFoldersFound = rootFolders.Count;
 
                 // Skip series fetch for performance - it's only used for counting which is not critical
@@ -257,7 +258,7 @@ namespace Optimarr.Services
                 // Pre-normalize and index all existing paths
                 foreach (var path in existingPaths)
                 {
-                    var normalized = NormalizePath(path.Path);
+                    var normalized = PathNormalizer.Normalize(path.Path);
                     if (!pathsByNormalizedPath.ContainsKey(normalized))
                     {
                         pathsByNormalizedPath[normalized] = path;
@@ -281,7 +282,7 @@ namespace Optimarr.Services
                         continue;
                     }
 
-                    var normalizedRootPath = NormalizePath(rootFolder.Path);
+                    var normalizedRootPath = PathNormalizer.Normalize(rootFolder.Path);
                     
                     // O(1) lookup: Check by root folder ID first (most specific), then by normalized path
                     LibraryPath? existingPath = null;
@@ -299,8 +300,8 @@ namespace Optimarr.Services
                     {
                         // Map the path if mappings are configured (update if path changed)
                         var mappedPath = MapPath(rootFolder.Path, "Sonarr");
-                        var normalizedMappedPath = NormalizePath(mappedPath);
-                        var normalizedExistingPath = NormalizePath(existingPath.Path);
+                        var normalizedMappedPath = PathNormalizer.Normalize(mappedPath);
+                        var normalizedExistingPath = PathNormalizer.Normalize(existingPath.Path);
                         
                         if (normalizedExistingPath != normalizedMappedPath)
                         {
@@ -329,7 +330,7 @@ namespace Optimarr.Services
                     {
                         // Map the path if mappings are configured
                         var mappedPath = MapPath(rootFolder.Path, "Sonarr");
-                        var normalizedMappedPath = NormalizePath(mappedPath);
+                        var normalizedMappedPath = PathNormalizer.Normalize(mappedPath);
                         
                         // Create new library path
                         var newPath = new LibraryPath
@@ -382,18 +383,12 @@ namespace Optimarr.Services
             {
                 _logger.LogError(ex, "Error syncing Sonarr library");
                 result.Success = false;
-                result.Message = $"Error: {ex.Message}";
+                result.Message = "An internal error occurred. Check logs for details.";
                 result.CompletedAt = DateTime.UtcNow;
                 result.Duration = result.CompletedAt.Value - result.StartedAt;
             }
 
             return result;
-        }
-
-        private string NormalizePath(string path)
-        {
-            if (string.IsNullOrEmpty(path)) return string.Empty;
-            return path.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
         }
 
         private string MapPath(string path, string servarrType)
@@ -406,14 +401,14 @@ namespace Optimarr.Services
             if (mappings == null || mappings.Count == 0)
                 return path; // No mappings configured, return original path
 
-            var normalizedPath = NormalizePath(path);
+            var normalizedPath = PathNormalizer.Normalize(path);
             
             // Try to find a matching mapping (longest match first)
-            var sortedMappings = mappings.OrderByDescending(m => NormalizePath(m.From).Length);
+            var sortedMappings = mappings.OrderByDescending(m => PathNormalizer.Normalize(m.From).Length);
             
             foreach (var mapping in sortedMappings)
             {
-                var normalizedFrom = NormalizePath(mapping.From);
+                var normalizedFrom = PathNormalizer.Normalize(mapping.From);
                 
                 // Check if path starts with the "from" path (with or without trailing slash)
                 if (normalizedPath == normalizedFrom || normalizedPath.StartsWith(normalizedFrom + "/"))
@@ -423,7 +418,7 @@ namespace Optimarr.Services
                         ? normalizedPath.Substring(normalizedFrom.Length) 
                         : "";
                     
-                    var normalizedTo = NormalizePath(mapping.To);
+                    var normalizedTo = PathNormalizer.Normalize(mapping.To);
                     var mappedPath = normalizedTo + remainingPath;
                     
                     // Preserve original path format (case, trailing slash)

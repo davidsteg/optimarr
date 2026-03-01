@@ -8,6 +8,7 @@ RUN dotnet restore
 
 # Copy everything else and build
 COPY . .
+RUN rm -rf ./Optimarr.Tests
 RUN dotnet publish -c Release -o /app/publish --no-restore
 
 # Runtime stage
@@ -17,7 +18,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 LABEL org.opencontainers.image.title="Optimarr"
 LABEL org.opencontainers.image.description="A web-based application for analyzing video files to determine their compatibility with media server clients"
 LABEL org.opencontainers.image.vendor="Optimarr"
-LABEL org.opencontainers.image.version="1.2.0"
+LABEL org.opencontainers.image.version="1.2.1"
 LABEL org.opencontainers.image.url="https://github.com/bridgemill-ch/optimarr"
 LABEL org.opencontainers.image.documentation="https://github.com/bridgemill-ch/optimarr/blob/main/README.md"
 LABEL org.opencontainers.image.source="https://github.com/bridgemill-ch/optimarr"
@@ -43,6 +44,9 @@ RUN apt-get update && \
 # Copy published app
 COPY --from=build /app/publish .
 
+# Ensure VERSION is present at runtime for /api/system/version
+COPY VERSION /app/VERSION
+
 # Copy appsettings.json as default configuration (stored outside config dir to avoid being hidden by mounts)
 # Entrypoint will copy this to /app/config/appsettings.json if the mounted config folder is empty
 COPY appsettings.json /app/appsettings.json.default
@@ -60,9 +64,11 @@ EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 ENV ASPNETCORE_ENVIRONMENT=Production
 
-# Add healthcheck (runs as root, but that's okay for healthchecks)
+# Add migration-aware healthcheck:
+# - During migration (checking/creating/migrating), report success to avoid false negatives
+# - Once migration is complete, require /api/system/health to be healthy
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl --fail http://localhost:8080/api/system/health || exit 1
+    CMD migration_status=$(curl --silent --show-error --fail http://localhost:8080/api/system/migration | grep -o '"status":"[^"]*"' | cut -d '"' -f4 || true); if [ "$migration_status" = "completed" ]; then curl --silent --show-error --fail http://localhost:8080/api/system/health > /dev/null; elif [ -z "$migration_status" ] || [ "$migration_status" = "error" ]; then exit 1; else exit 0; fi
 
 # Use entrypoint script to fix permissions, then switch to non-root user
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh", "dotnet", "optimarr.dll"]

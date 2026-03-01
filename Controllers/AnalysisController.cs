@@ -17,6 +17,9 @@ namespace Optimarr.Controllers
             _logger = logger;
         }
 
+        /// <summary>
+        /// Analyzes a video file by absolute path and returns a compatibility report.
+        /// </summary>
         [HttpPost("analyze")]
         public async Task<ActionResult<AnalysisResponse>> AnalyzeVideo([FromBody] AnalysisRequest request)
         {
@@ -46,10 +49,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error analyzing video: {VideoPath}", request.VideoPath);
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Analyzes an uploaded video file (and optional subtitle file) and returns a compatibility report.
+        /// </summary>
         [HttpPost("analyze-file")]
         public async Task<ActionResult<AnalysisResponse>> AnalyzeUploadedFile(IFormFile videoFile, IFormFile? subtitleFile)
         {
@@ -125,7 +131,7 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error analyzing uploaded file: {FileName}", videoFile?.FileName);
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
     }

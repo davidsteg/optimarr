@@ -1,43 +1,92 @@
 # Configuration Directory
 
-This directory contains the `appsettings.json` file that will be mounted into the Docker container.
+This directory contains the runtime `appsettings.json` mounted into the container at `/app/config/appsettings.json`.
 
-## Setup Instructions
+Optimarr loads configuration from:
 
-1. **Copy the default configuration** (if the file doesn't exist):
+1. `/app/config/appsettings.json` (preferred runtime source)
+2. `/app/appsettings.json` (fallback when config mount is missing)
+
+Use this file for deployment-specific values and keep secrets out of source control.
+
+## Setup
+
+1. Create `config/appsettings.json` from the root template:
    ```bash
-   cp ../appsettings.json ./appsettings.json
+   cp appsettings.json config/appsettings.json
    ```
-   
-   **Note:** If this folder is empty, the container will use the default `appsettings.json` from the image. 
-   However, if you mount this folder (as configured in docker-compose.yml), you should ensure `appsettings.json` exists here.
+2. Update values for your environment (URLs, API keys, allowed origins, matching settings).
+3. Restart the container after changes.
 
-2. **Edit `appsettings.json`** to configure:
-   - Servarr API keys and URLs
-   - Logging levels
-   - Other application settings
+## Required Security Notes
 
-3. **The configuration file is mounted as read-only** in the container to prevent accidental modifications.
+- Do not commit real API keys or internal service URLs.
+- Keep `Auth:ApiKey` empty to disable API-key protection, or set a strong value to require `X-Optimarr-Key` for `/api/*` routes.
+- Prefer Docker environment variables for secret injection in production.
 
-## Important Notes
+## Key Configuration Reference
 
-- **If the config folder is empty on the host**, the container will still work using the default configuration built into the image
-- **To customize settings**, copy `appsettings.json` from the project root to this folder before starting the container
-- The application will automatically copy `appsettings.json` from root to config folder on startup if config is writable (but config is mounted as read-only, so this won't work with Docker volumes)
+### Authentication
 
-## Volume Mounts
+- `Auth:ApiKey`
+  - Empty: API auth disabled (backward-compatible mode)
+  - Set: API auth enabled; clients must send `X-Optimarr-Key`
 
-The following volumes are configured in `docker-compose.yml`:
+### CORS
 
-- **Config**: `./config` → `/app/config` (read-only)
-- **Database**: `./data` → `/app/data` (persistent, visible on host)
-- **Logs**: `./logs` → `/app/logs` (persistent, visible on host)
-- **Videos**: `./videos` → `/videos` (read-only)
+- `Cors:AllowedOrigins` (array)
+  - Example:
+    ```json
+    "Cors": {
+      "AllowedOrigins": [
+        "http://localhost:5000",
+        "https://optimarr.example.com"
+      ]
+    }
+    ```
+  - If empty, Optimarr falls back to localhost-only origins.
 
-## Notes
+### Matching Options
 
-- Changes to `appsettings.json` require container restart to take effect
-- The database is stored in `./data/optimarr.db` on the host
-- Logs are stored in `./logs/` on the host and can be accessed directly
-- All folders are created automatically on first boot if they don't exist
+These keys control matching throughput in `VideoServarrMatcherService`:
+
+- `MatchingOptions:SeriesConcurrency` - max concurrent Sonarr matching operations
+- `MatchingOptions:MovieConcurrency` - max concurrent Radarr matching operations
+- `MatchingOptions:VideoBatchSize` - number of videos loaded/processed per batch
+- `MatchingOptions:SaveBatchSize` - number of updates before persisting with `SaveChangesAsync`
+- `MatchingOptions:MaxMatchConcurrency` - upper bound for match workers in shared paths
+
+Default values:
+
+```json
+"MatchingOptions": {
+  "SeriesConcurrency": 20,
+  "MovieConcurrency": 50,
+  "VideoBatchSize": 2000,
+  "SaveBatchSize": 200,
+  "MaxMatchConcurrency": 50
+}
+```
+
+### Servarr and Jellyfin
+
+- `Servarr:Sonarr:*` and `Servarr:Radarr:*` contain URL/API key/enabled toggles.
+- `Jellyfin:*` contains URL/API key and optional credentials for playback sync.
+
+## Docker Volume Mounts
+
+Standard mounts:
+
+- `./config` -> `/app/config` (runtime configuration)
+- `./data` -> `/app/data` (SQLite database persistence)
+- `./logs` -> `/app/logs` (application logs)
+- `./videos` -> `/videos` (media library, read-only recommended)
+
+## Development Container Defaults
+
+When running `docker-compose.dev.yml`, these defaults are set:
+
+- `ASPNETCORE_ENVIRONMENT=Development`
+- `ASPNETCORE_URLS=http://+:8080`
+- `DOTNET_USE_POLLING_FILE_WATCHER=1`
 

@@ -15,16 +15,23 @@ namespace Optimarr.Controllers
             _logger = logger;
         }
 
+        /// <summary>
+        /// Returns application liveness status, current version, and server timestamp.
+        /// </summary>
         [HttpGet("health")]
         public ActionResult<object> GetHealth()
         {
             return Ok(new
             {
                 status = "healthy",
+                version = ReadCurrentVersion(),
                 timestamp = DateTime.UtcNow
             });
         }
 
+        /// <summary>
+        /// Returns current database migration progress information.
+        /// </summary>
         [HttpGet("migration")]
         public ActionResult<object> GetMigrationStatus()
         {
@@ -41,42 +48,66 @@ namespace Optimarr.Controllers
             return Ok(progress);
         }
 
+        /// <summary>
+        /// Returns readiness state and reports 503 until startup migrations complete.
+        /// </summary>
+        [HttpGet("ready")]
+        public ActionResult<object> GetReadiness()
+        {
+            var progress = DatabaseMigrationService.GetMigrationProgress();
+            if (progress == null)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    status = "not_ready",
+                    reason = "migration_status_unavailable",
+                    message = "Migration status is not available yet."
+                });
+            }
+
+            var migrationStatus = progress.Status?.Trim().ToLowerInvariant();
+            var isReady = migrationStatus == "completed";
+
+            if (!isReady)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    status = "not_ready",
+                    migrationStatus = progress.Status,
+                    progress.Message
+                });
+            }
+
+            return Ok(new
+            {
+                status = "ready",
+                migrationStatus = progress.Status
+            });
+        }
+
+        /// <summary>
+        /// Returns application version metadata from VERSION file or assembly attributes.
+        /// </summary>
         [HttpGet("version")]
         public ActionResult<object> GetVersion()
         {
-            // Try to read version from VERSION file first (preferred method)
-            var versionFile = Path.Combine(AppContext.BaseDirectory, "VERSION");
-            string? versionFromFile = null;
-            
-            if (System.IO.File.Exists(versionFile))
-            {
-                try
-                {
-                    versionFromFile = System.IO.File.ReadAllText(versionFile).Trim();
-                }
-                catch
-                {
-                    // Ignore errors reading version file
-                }
-            }
-            
-            // Fallback to assembly version if VERSION file not found
             var assembly = Assembly.GetExecutingAssembly();
-            var version = assembly.GetName().Version;
-            var versionString = version?.ToString() ?? "Unknown";
-            
-            // Try to get informational version if available
+            var assemblyVersion = assembly.GetName().Version?.ToString() ?? "Unknown";
             var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-            
+            var versionFromFile = ReadVersionFile();
+
             return Ok(new
             {
-                version = versionFromFile ?? informationalVersion ?? versionString,
-                assemblyVersion = versionString,
+                version = versionFromFile ?? informationalVersion ?? assemblyVersion,
+                assemblyVersion,
                 buildDate = GetBuildDate(assembly),
                 source = versionFromFile != null ? "VERSION file" : "Assembly"
             });
         }
 
+        /// <summary>
+        /// Accepts a reboot request and returns platform-specific restart guidance.
+        /// </summary>
         [HttpPost("reboot")]
         public ActionResult Reboot()
         {
@@ -96,6 +127,21 @@ namespace Optimarr.Controllers
                 message = "Reboot request received. In Docker, the container will restart if a restart policy is configured. For native installations, please restart the service manually.",
                 note = "The application will attempt to gracefully shut down."
             });
+        }
+
+        private static string? ReadVersionFile()
+        {
+            var versionFile = Path.Combine(AppContext.BaseDirectory, "VERSION");
+            if (!System.IO.File.Exists(versionFile)) return null;
+            try { return System.IO.File.ReadAllText(versionFile).Trim(); }
+            catch { return null; }
+        }
+
+        private string ReadCurrentVersion()
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            return ReadVersionFile() ?? informationalVersion ?? assembly.GetName().Version?.ToString() ?? "Unknown";
         }
 
         private string? GetBuildDate(Assembly assembly)

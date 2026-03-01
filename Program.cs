@@ -1,6 +1,8 @@
 using Optimarr.Services;
 using Optimarr.Controllers;
 using Optimarr.Data;
+using Optimarr.Middleware;
+using Optimarr.Models;
 using System.Text.Json.Serialization;
 using Serilog;
 using Serilog.Events;
@@ -203,16 +205,21 @@ try
     builder.Services.AddDbContext<AppDbContext>(options =>
         options.UseSqlite($"Data Source={dbPath}"));
 
+    builder.Services.Configure<ServarrOptions>(builder.Configuration.GetSection("Servarr"));
+
     // Register application services
     builder.Services.AddScoped<VideoAnalyzerService>(sp => 
-        new VideoAnalyzerService(sp.GetRequiredService<IConfiguration>(), sp.GetService<ILogger<VideoAnalyzerService>>()));
+        new VideoAnalyzerService(
+            sp.GetRequiredService<IConfiguration>(),
+            sp.GetService<ILogger<VideoAnalyzerService>>(),
+            sp.GetRequiredService<AppDbContext>()));
     builder.Services.AddScoped<LibraryScannerService>();
-    builder.Services.AddSingleton<SonarrService>(sp => 
-        new SonarrService(sp.GetRequiredService<IConfiguration>(), 
-            sp.GetService<ILogger<SonarrService>>()));
-    builder.Services.AddSingleton<RadarrService>(sp => 
-        new RadarrService(sp.GetRequiredService<IConfiguration>(), 
-            sp.GetService<ILogger<RadarrService>>()));
+    builder.Services.AddSingleton<SonarrService>();
+    builder.Services.AddSingleton<ISonarrService>(sp => sp.GetRequiredService<SonarrService>());
+    builder.Services.AddSingleton<IServarrService>(sp => sp.GetRequiredService<SonarrService>());
+    builder.Services.AddSingleton<RadarrService>();
+    builder.Services.AddSingleton<IRadarrService>(sp => sp.GetRequiredService<RadarrService>());
+    builder.Services.AddSingleton<IServarrService>(sp => sp.GetRequiredService<RadarrService>());
     builder.Services.AddScoped<ServarrSyncService>();
     builder.Services.AddScoped<VideoServarrMatcherService>();
     builder.Services.AddSingleton<VideoMatchingProgressService>();
@@ -225,14 +232,30 @@ try
     builder.Services.AddHostedService<PlaybackSyncService>();
     builder.Services.AddHostedService<ProcessingRescanService>();
 
-    // CORS for local development
+    // CORS — allow only explicitly configured origins (S3)
+    var allowedOrigins = builder.Configuration
+        .GetSection("Cors:AllowedOrigins")
+        .Get<string[]>() ?? Array.Empty<string>();
+
     builder.Services.AddCors(options =>
     {
-        options.AddPolicy("AllowAll", policy =>
+        options.AddPolicy("AllowConfigured", policy =>
         {
-            policy.AllowAnyOrigin()
-                  .AllowAnyMethod()
-                  .AllowAnyHeader();
+            if (allowedOrigins.Length == 0)
+            {
+                // No origins configured — restrict to localhost only (safe default)
+                policy.WithOrigins(
+                    "http://localhost:5000", "http://localhost:8080",
+                    "http://127.0.0.1:5000", "http://127.0.0.1:8080")
+                      .AllowAnyMethod()
+                      .AllowAnyHeader();
+            }
+            else
+            {
+                policy.WithOrigins(allowedOrigins)
+                      .AllowAnyMethod()
+                      .AllowAnyHeader();
+            }
         });
     });
 
@@ -328,11 +351,42 @@ try
         });
     }
 
-    app.UseCors("AllowAll");
+    // S8: global API exception handling in JSON format without stack trace leakage.
+    app.UseExceptionHandler(exceptionApp =>
+    {
+        exceptionApp.Run(async context =>
+        {
+            var exceptionFeature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerPathFeature>();
+            if (exceptionFeature?.Error != null)
+            {
+                Log.Error(
+                    exceptionFeature.Error,
+                    "Unhandled exception for request path {Path}",
+                    exceptionFeature.Path);
+            }
+
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsJsonAsync(new { error = "An internal error occurred. Check logs for details." });
+        });
+    });
+
+    app.UseCors("AllowConfigured");
+
+    // API key authentication — runs after CORS so preflight OPTIONS pass through (S7)
+    app.UseMiddleware<ApiKeyMiddleware>();
 
     // Serve static files (web UI)
     app.UseDefaultFiles();
     app.UseStaticFiles();
+
+    // Security hardening headers (Part E)
+    app.Use(async (context, next) =>
+    {
+        context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+        context.Response.Headers.Append("X-Frame-Options", "SAMEORIGIN");
+        await next();
+    });
 
     app.UseAuthorization();
 

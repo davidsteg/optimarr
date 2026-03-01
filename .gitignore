@@ -201,3 +201,8 @@ FodyWeavers.xsd
 docker-compose.dev.yml
 .cursor
 Dockerfile.dev
+# Optimarr runtime / Docker volumes
+config/
+data/
+logs/
+videos/

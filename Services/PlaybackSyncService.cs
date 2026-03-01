@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using Optimarr.Data;
+using Optimarr.Helpers;
 using Optimarr.Services;
 
 namespace Optimarr.Services
@@ -172,10 +173,10 @@ namespace Optimarr.Services
             if (string.IsNullOrEmpty(playback.FilePath)) return;
 
             // Normalize path for comparison
-            var normalizedPlaybackPath = NormalizePath(playback.FilePath);
+            var normalizedPlaybackPath = PathNormalizer.Normalize(playback.FilePath);
 
             // Try to match with VideoAnalysis by file path
-            // Load video analyses into memory to avoid LINQ translation issues with NormalizePath
+            // Load video analyses into memory to avoid LINQ translation issues with PathNormalizer.Normalize
             var allVideoAnalyses = await dbContext.VideoAnalyses
                 .Select(v => new { v.Id, v.FilePath })
                 .ToListAsync(cancellationToken);
@@ -184,7 +185,7 @@ namespace Optimarr.Services
             {
                 if (!string.IsNullOrEmpty(video.FilePath))
                 {
-                    var normalizedVideoPath = NormalizePath(video.FilePath);
+                    var normalizedVideoPath = PathNormalizer.Normalize(video.FilePath);
                     if (normalizedVideoPath == normalizedPlaybackPath)
                     {
                         playback.VideoAnalysisId = video.Id;
@@ -200,7 +201,7 @@ namespace Optimarr.Services
 
             foreach (var libraryPath in libraryPaths)
             {
-                var normalizedLibraryPath = NormalizePath(libraryPath.Path);
+                var normalizedLibraryPath = PathNormalizer.Normalize(libraryPath.Path);
                 if (normalizedPlaybackPath.StartsWith(normalizedLibraryPath, StringComparison.OrdinalIgnoreCase))
                 {
                     playback.LibraryPathId = libraryPath.Id;
@@ -209,19 +210,6 @@ namespace Optimarr.Services
             }
         }
 
-        private string NormalizePath(string path)
-        {
-            if (string.IsNullOrEmpty(path)) return string.Empty;
-            
-            // Normalize path separators and case
-            var normalized = path.Replace('\\', '/');
-            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
-            {
-                normalized = normalized.ToLowerInvariant();
-            }
-            
-            return normalized.TrimEnd('/');
-        }
     }
 }
 

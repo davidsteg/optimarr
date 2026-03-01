@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Optimarr.Data;
+using Optimarr.Helpers;
 using Optimarr.Models;
 using Optimarr.Services;
 using System.Collections.Concurrent;
@@ -11,15 +12,15 @@ namespace Optimarr.Services
     public class VideoServarrMatcherService
     {
         private readonly AppDbContext _dbContext;
-        private readonly SonarrService _sonarrService;
-        private readonly RadarrService _radarrService;
+        private readonly ISonarrService _sonarrService;
+        private readonly IRadarrService _radarrService;
         private readonly ILogger<VideoServarrMatcherService> _logger;
         private readonly IConfiguration _configuration;
 
         public VideoServarrMatcherService(
             AppDbContext dbContext,
-            SonarrService sonarrService,
-            RadarrService radarrService,
+            ISonarrService sonarrService,
+            IRadarrService radarrService,
             ILogger<VideoServarrMatcherService> logger,
             IConfiguration configuration)
         {
@@ -46,7 +47,7 @@ namespace Optimarr.Services
                 return;
             }
 
-            var normalizedPath = NormalizePath(video.FilePath);
+            var normalizedPath = PathNormalizer.Normalize(video.FilePath);
             var normalizedTitle = NormalizeTitle(video.FilePath);
 
             // Try to match with Sonarr first (using pre-loaded data if available)
@@ -185,9 +186,9 @@ namespace Optimarr.Services
         public async Task<int> MatchAllVideosAsync(VideoMatchingProgressService? progressService, string? matchId)
         {
             _logger.LogInformation("Starting video matching process...");
-            
-            // Get total count first without loading all videos
+
             var totalVideos = await _dbContext.VideoAnalyses
+                .AsNoTracking()
                 .Where(v => !string.IsNullOrEmpty(v.FilePath))
                 .CountAsync();
 
@@ -207,325 +208,42 @@ namespace Optimarr.Services
             {
                 progressService.UpdateProgress(matchId, 0, totalVideos, 0, 0, "Pre-loading Servarr data...");
             }
-            
-            // Update progress after Servarr data is loaded
+
+            var options = LoadMatchingOptions();
+            var memoryBeforePreloadBytes = GC.GetTotalMemory(false);
+            var cache = await PreloadServarrDataAsync(options);
+            var memoryAfterPreloadBytes = GC.GetTotalMemory(false);
+            var preloadDeltaMb = (memoryAfterPreloadBytes - memoryBeforePreloadBytes) / (1024d * 1024d);
+            _logger.LogInformation(
+                "Servarr preload memory delta: {DeltaMb:F1} MB (before: {BeforeMb:F1} MB, after: {AfterMb:F1} MB)",
+                preloadDeltaMb,
+                memoryBeforePreloadBytes / (1024d * 1024d),
+                memoryAfterPreloadBytes / (1024d * 1024d));
+
             if (progressService != null && matchId != null)
             {
                 progressService.UpdateProgress(matchId, 0, totalVideos, 0, 0, "Starting video matching...");
             }
 
-            // Pre-load Servarr data to avoid repeated API calls
-            _logger.LogInformation("Pre-loading Servarr data...");
-            Dictionary<string, SonarrEpisode>? sonarrEpisodes = null;
-            Dictionary<string, SonarrEpisode>? sonarrEpisodesByTitle = null;
-            Dictionary<int, SonarrSeries>? sonarrSeries = null;
-            Dictionary<string, RadarrMovie>? radarrMovies = null;
-            Dictionary<string, RadarrMovie>? radarrMoviesByTitle = null;
-
-            if (_sonarrService.IsEnabled && _sonarrService.IsConnected)
-            {
-                try
-                {
-                    _logger.LogInformation("Loading Sonarr series and episodes...");
-                    var allSeries = await _sonarrService.GetSeries();
-                    sonarrSeries = allSeries.ToDictionary(s => s.Id, s => s);
-                    _logger.LogInformation("Loaded {SeriesCount} series from Sonarr", allSeries.Count);
-
-                    // Load all episodes in parallel for better performance
-                    var sonarrEpisodesConcurrent = new ConcurrentDictionary<string, SonarrEpisode>();
-                    var sonarrEpisodesByTitleConcurrent = new ConcurrentDictionary<string, SonarrEpisode>();
-                    // Reduced concurrency to avoid overwhelming Sonarr API (5 series, 10 episode files)
-                    var seriesSemaphore = new SemaphoreSlim(5, 5);
-                    var episodeFileSemaphore = new SemaphoreSlim(10, 10);
-                    var tasks = allSeries.Select(async series =>
-                    {
-                        await seriesSemaphore.WaitAsync();
-                        try
-                        {
-                            var episodes = await _sonarrService.GetEpisodesBySeries(series.Id);
-                            
-                            // First pass: Use episode.Path if available (avoids API calls)
-                            foreach (var episode in episodes)
-                            {
-                                if (!string.IsNullOrEmpty(episode.Path))
-                                {
-                                    var normalizedPath = NormalizePath(episode.Path);
-                                    sonarrEpisodesConcurrent.TryAdd(normalizedPath, episode);
-                                    
-                                    // Also index by title for container-agnostic matching
-                                    var normalizedTitle = NormalizeTitle(episode.Path);
-                                    if (!string.IsNullOrEmpty(normalizedTitle))
-                                    {
-                                        sonarrEpisodesByTitleConcurrent.TryAdd(normalizedTitle, episode);
-                                    }
-                                }
-                            }
-                            
-                            // Second pass: Only fetch episode files for episodes without Path
-                            var episodesNeedingFileFetch = episodes
-                                .Where(e => e.EpisodeFileId.HasValue && string.IsNullOrEmpty(e.Path))
-                                .ToList();
-                            
-                            if (episodesNeedingFileFetch.Count > 0)
-                            {
-                                var episodeFileTasks = episodesNeedingFileFetch.Select(async episode =>
-                                {
-                                    await episodeFileSemaphore.WaitAsync();
-                                    try
-                                    {
-                                        // Add small delay to avoid overwhelming Sonarr
-                                        await Task.Delay(50);
-                                        
-                                        var episodeFile = await _sonarrService.GetEpisodeFile(episode.EpisodeFileId!.Value);
-                                        if (episodeFile != null && !string.IsNullOrEmpty(episodeFile.Path))
-                                        {
-                                            var normalizedPath = NormalizePath(episodeFile.Path);
-                                            sonarrEpisodesConcurrent.TryAdd(normalizedPath, episode);
-                                            
-                                            // Also index by title for container-agnostic matching
-                                            var normalizedTitle = NormalizeTitle(episodeFile.Path);
-                                            if (!string.IsNullOrEmpty(normalizedTitle))
-                                            {
-                                                sonarrEpisodesByTitleConcurrent.TryAdd(normalizedTitle, episode);
-                                            }
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogWarning(ex, "Error loading episode file {EpisodeFileId} for series {SeriesId}", 
-                                            episode.EpisodeFileId ?? 0, series.Id);
-                                    }
-                                    finally
-                                    {
-                                        episodeFileSemaphore.Release();
-                                    }
-                                });
-                                await Task.WhenAll(episodeFileTasks);
-                            }
-                            
-                            // Add delay between series to avoid overwhelming Sonarr
-                            await Task.Delay(100);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Error loading episodes for series {SeriesId}: {Error}", series.Id, ex.Message);
-                        }
-                        finally
-                        {
-                            seriesSemaphore.Release();
-                        }
-                    });
-                    await Task.WhenAll(tasks);
-                    sonarrEpisodes = sonarrEpisodesConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-                    sonarrEpisodesByTitle = sonarrEpisodesByTitleConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-                    _logger.LogInformation("Loaded {EpisodeCount} episode paths and {TitleCount} episode titles from Sonarr", 
-                        sonarrEpisodes.Count, sonarrEpisodesByTitle.Count);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error pre-loading Sonarr data");
-                }
-            }
-
-            if (_radarrService.IsEnabled && _radarrService.IsConnected)
-            {
-                try
-                {
-                    _logger.LogInformation("Loading Radarr movies...");
-                    var movies = await _radarrService.GetMovies();
-                    // Use ConcurrentDictionary for thread-safe parallel processing
-                    var radarrMoviesConcurrent = new ConcurrentDictionary<string, RadarrMovie>();
-                    var radarrMoviesByTitleConcurrent = new ConcurrentDictionary<string, RadarrMovie>();
-                    
-                    // Process movies in parallel batches for better performance
-                    var movieSemaphore = new SemaphoreSlim(50, 50); // Process 50 movies concurrently
-                    var movieTasks = movies.Select(async movie =>
-                    {
-                        await movieSemaphore.WaitAsync();
-                        try
-                        {
-                            if (movie.MovieFile != null && !string.IsNullOrEmpty(movie.MovieFile.Path))
-                            {
-                                var normalizedPath = NormalizePath(movie.MovieFile.Path);
-                                radarrMoviesConcurrent.TryAdd(normalizedPath, movie);
-                                
-                                // Also index by title for container-agnostic matching
-                                var normalizedTitle = NormalizeTitle(movie.MovieFile.Path);
-                                if (!string.IsNullOrEmpty(normalizedTitle))
-                                {
-                                    radarrMoviesByTitleConcurrent.TryAdd(normalizedTitle, movie);
-                                }
-                            }
-                        }
-                        finally
-                        {
-                            movieSemaphore.Release();
-                        }
-                    });
-                    await Task.WhenAll(movieTasks);
-                    
-                    radarrMovies = radarrMoviesConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-                    radarrMoviesByTitle = radarrMoviesByTitleConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-                    _logger.LogInformation("Loaded {MovieCount} movie paths and {TitleCount} movie titles from Radarr", 
-                        radarrMovies.Count, radarrMoviesByTitle.Count);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error pre-loading Radarr data");
-                }
-            }
-
-            _logger.LogInformation("Starting to match videos...");
-            var matchedCount = 0;
-            var processedCount = 0;
-            var errorCount = 0;
-            const int videoBatchSize = 1000; // Process videos in larger batches for better performance
-            const int saveBatchSize = 100; // Save every 100 videos (reduces database writes)
-            const int logInterval = 200; // Log progress every 200 videos
-            const int progressUpdateInterval = 10; // Update progress every 10 videos (more frequent for better UX)
-            const int maxConcurrency = 20; // Increased concurrency for large libraries (was 10)
-
-            var matchingSemaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-            var processedLock = new object();
-            
-            // Helper method to update progress (called from within lock)
-            void UpdateProgressIfNeeded(int currentProcessed, int currentTotal, int currentMatched, int currentErrors, string? currentItem = null)
-            {
-                if (progressService != null && matchId != null)
-                {
-                    // Always update on first video, then every N videos, or if it's been a while
-                    if (currentProcessed == 1 || 
-                        currentProcessed % progressUpdateInterval == 0 || 
-                        currentProcessed == currentTotal)
-                    {
-                        progressService.UpdateProgress(matchId, currentProcessed, currentTotal, currentMatched, currentErrors, currentItem);
-                    }
-                }
-            }
-
-            // Process videos in batches to reduce memory usage
-            int skip = 0;
-            while (skip < totalVideos)
-            {
-                var videoBatch = await _dbContext.VideoAnalyses
+            var result = await MatchVideosCoreAsync(
+                totalVideos,
+                options,
+                cache,
+                skip => _dbContext.VideoAnalyses
                     .Where(v => !string.IsNullOrEmpty(v.FilePath))
                     .OrderBy(v => v.Id)
                     .Skip(skip)
-                    .Take(videoBatchSize)
-                    .ToListAsync();
+                    .Take(options.VideoBatchSize),
+                progressService,
+                matchId,
+                "all videos");
 
-                if (videoBatch.Count == 0) break;
-
-                _logger.LogInformation("Processing batch: {Skip} to {End} of {Total} videos", 
-                    skip + 1, skip + videoBatch.Count, totalVideos);
-
-                // Process videos in parallel with controlled concurrency
-                var batchTasks = videoBatch.Select(async video =>
-                {
-                    await matchingSemaphore.WaitAsync();
-                    try
-                    {
-                        // Skip videos that already have a valid match
-                        var normalizedPath = NormalizePath(video.FilePath ?? string.Empty);
-                        var alreadyMatched = false;
-                        
-                        if (!string.IsNullOrEmpty(video.ServarrType))
-                        {
-                            // Check if the existing match is still valid
-                            if (video.ServarrType == "Sonarr" && sonarrEpisodes != null)
-                            {
-                                alreadyMatched = sonarrEpisodes.ContainsKey(normalizedPath);
-                            }
-                            else if (video.ServarrType == "Radarr" && radarrMovies != null)
-                            {
-                                alreadyMatched = radarrMovies.ContainsKey(normalizedPath);
-                            }
-                        }
-
-                        if (!alreadyMatched)
-                        {
-                            var hadMatch = !string.IsNullOrEmpty(video.ServarrType);
-                            await MatchVideoWithServarrAsync(video, sonarrEpisodes, sonarrSeries, radarrMovies, 
-                                sonarrEpisodesByTitle, radarrMoviesByTitle);
-                            
-                            lock (processedLock)
-                            {
-                                if (!hadMatch && !string.IsNullOrEmpty(video.ServarrType))
-                                {
-                                    matchedCount++;
-                                }
-                                processedCount++;
-
-                                var fileName = System.IO.Path.GetFileName(video.FilePath);
-                                UpdateProgressIfNeeded(processedCount, totalVideos, matchedCount, errorCount, fileName);
-
-                                // Log progress at intervals
-                                if (processedCount % logInterval == 0)
-                                {
-                                    var percent = totalVideos > 0 ? (processedCount * 100 / totalVideos) : 0;
-                                    _logger.LogInformation("Matching progress: {Processed}/{Total} videos processed ({Percent}%), {Matched} matched", 
-                                        processedCount, totalVideos, percent, matchedCount);
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // Video already matched, just increment counter and update progress
-                            lock (processedLock)
-                            {
-                                processedCount++;
-                                UpdateProgressIfNeeded(processedCount, totalVideos, matchedCount, errorCount);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        lock (processedLock)
-                        {
-                            errorCount++;
-                        }
-                        _logger.LogWarning(ex, "Error processing video {VideoId} ({FilePath}): {Error}", 
-                            video.Id, video.FilePath, ex.Message);
-                    }
-                    finally
-                    {
-                        matchingSemaphore.Release();
-                    }
-                });
-
-                await Task.WhenAll(batchTasks);
-                
-                // Save changes after processing each batch
-                await _dbContext.SaveChangesAsync();
-                
-                // Update progress after each batch completes
-                lock (processedLock)
-                {
-                    // Always update progress after batch completion to ensure UI reflects current state
-                    UpdateProgressIfNeeded(processedCount, totalVideos, matchedCount, errorCount);
-                    
-                    if (processedCount % saveBatchSize < videoBatchSize || processedCount % logInterval < videoBatchSize)
-                    {
-                        _logger.LogInformation("Progress: {Processed}/{Total} videos processed, {Matched} matched so far", 
-                            processedCount, totalVideos, matchedCount);
-                    }
-                }
-                
-                skip += videoBatchSize;
-            }
-
-            // Final save
-            await _dbContext.SaveChangesAsync();
-            _logger.LogInformation("Video matching completed: {Processed}/{Total} processed, {Matched} matched, {Errors} errors", 
-                processedCount, totalVideos, matchedCount, errorCount);
-            
-            // Update final progress
             if (progressService != null && matchId != null)
             {
-                progressService.CompleteProgress(matchId, matchedCount, errorCount);
+                progressService.CompleteProgress(matchId, result.MatchedCount, result.ErrorCount);
             }
-            
-            return matchedCount;
+
+            return result.MatchedCount;
         }
 
         /// <summary>
@@ -533,7 +251,9 @@ namespace Optimarr.Services
         /// </summary>
         public async Task<int> MatchVideosForLibraryPathAsync(int libraryPathId)
         {
-            var libraryPath = await _dbContext.LibraryPaths.FindAsync(libraryPathId);
+            var libraryPath = await _dbContext.LibraryPaths
+                .AsNoTracking()
+                .FirstOrDefaultAsync(lp => lp.Id == libraryPathId);
             if (libraryPath == null)
             {
                 _logger.LogWarning("Library path {LibraryPathId} not found", libraryPathId);
@@ -542,10 +262,11 @@ namespace Optimarr.Services
 
             _logger.LogInformation("Starting video matching for library path: {Path}", libraryPath.Path);
 
-            // Use database-friendly query (avoid NormalizePath in LINQ)
+            // Use database-friendly query (avoid PathNormalizer.Normalize in LINQ)
             var libraryPathLower = libraryPath.Path.Replace('\\', '/').ToLowerInvariant();
             var totalVideos = await _dbContext.VideoAnalyses
-                .Where(v => !string.IsNullOrEmpty(v.FilePath) && 
+                .AsNoTracking()
+                .Where(v => !string.IsNullOrEmpty(v.FilePath) &&
                            (v.FilePath.Replace('\\', '/').ToLowerInvariant().StartsWith(libraryPathLower) ||
                             v.FilePath.Replace('\\', '/').ToLowerInvariant().StartsWith(libraryPathLower + "/")))
                 .CountAsync();
@@ -558,235 +279,429 @@ namespace Optimarr.Services
                 return 0;
             }
 
-            // Pre-load Servarr data (same optimized approach as MatchAllVideosAsync)
-            Dictionary<string, SonarrEpisode>? sonarrEpisodes = null;
-            Dictionary<string, SonarrEpisode>? sonarrEpisodesByTitle = null;
-            Dictionary<int, SonarrSeries>? sonarrSeries = null;
-            Dictionary<string, RadarrMovie>? radarrMovies = null;
-            Dictionary<string, RadarrMovie>? radarrMoviesByTitle = null;
+            var options = LoadMatchingOptions();
+            var memoryBeforePreloadBytes = GC.GetTotalMemory(false);
+            var cache = await PreloadServarrDataAsync(options);
+            var memoryAfterPreloadBytes = GC.GetTotalMemory(false);
+            var preloadDeltaMb = (memoryAfterPreloadBytes - memoryBeforePreloadBytes) / (1024d * 1024d);
+            _logger.LogInformation(
+                "Servarr preload memory delta: {DeltaMb:F1} MB (before: {BeforeMb:F1} MB, after: {AfterMb:F1} MB)",
+                preloadDeltaMb,
+                memoryBeforePreloadBytes / (1024d * 1024d),
+                memoryAfterPreloadBytes / (1024d * 1024d));
 
-            if (_sonarrService.IsEnabled && _sonarrService.IsConnected)
-            {
-                try
-                {
-                    var allSeries = await _sonarrService.GetSeries();
-                    sonarrSeries = allSeries.ToDictionary(s => s.Id, s => s);
-                    var sonarrEpisodesConcurrent = new ConcurrentDictionary<string, SonarrEpisode>();
-                    var sonarrEpisodesByTitleConcurrent = new ConcurrentDictionary<string, SonarrEpisode>();
-                    var seriesSemaphore = new SemaphoreSlim(5, 5);
-                    var episodeFileSemaphore = new SemaphoreSlim(10, 10);
-                    var tasks = allSeries.Select(async series =>
-                    {
-                        await seriesSemaphore.WaitAsync();
-                        try
-                        {
-                            var episodes = await _sonarrService.GetEpisodesBySeries(series.Id);
-                            
-                            // First pass: Use episode.Path if available (avoids API calls)
-                            foreach (var episode in episodes)
-                            {
-                                if (!string.IsNullOrEmpty(episode.Path))
-                                {
-                                    var normalizedPath = NormalizePath(episode.Path);
-                                    sonarrEpisodesConcurrent.TryAdd(normalizedPath, episode);
-                                    
-                                    // Also index by title for container-agnostic matching
-                                    var normalizedTitle = NormalizeTitle(episode.Path);
-                                    if (!string.IsNullOrEmpty(normalizedTitle))
-                                    {
-                                        sonarrEpisodesByTitleConcurrent.TryAdd(normalizedTitle, episode);
-                                    }
-                                }
-                            }
-                            
-                            // Second pass: Only fetch episode files for episodes without Path
-                            var episodesNeedingFileFetch = episodes
-                                .Where(e => e.EpisodeFileId.HasValue && string.IsNullOrEmpty(e.Path))
-                                .ToList();
-                            
-                            if (episodesNeedingFileFetch.Count > 0)
-                            {
-                                var episodeFileTasks = episodesNeedingFileFetch.Select(async episode =>
-                                {
-                                    await episodeFileSemaphore.WaitAsync();
-                                    try
-                                    {
-                                        await Task.Delay(50); // Throttle API calls
-                                        var episodeFile = await _sonarrService.GetEpisodeFile(episode.EpisodeFileId!.Value);
-                                        if (episodeFile != null && !string.IsNullOrEmpty(episodeFile.Path))
-                                        {
-                                            var normalizedPath = NormalizePath(episodeFile.Path);
-                                            sonarrEpisodesConcurrent.TryAdd(normalizedPath, episode);
-                                            
-                                            // Also index by title for container-agnostic matching
-                                            var normalizedTitle = NormalizeTitle(episodeFile.Path);
-                                            if (!string.IsNullOrEmpty(normalizedTitle))
-                                            {
-                                                sonarrEpisodesByTitleConcurrent.TryAdd(normalizedTitle, episode);
-                                            }
-                                        }
-                                    }
-                                    catch { }
-                                    finally
-                                    {
-                                        episodeFileSemaphore.Release();
-                                    }
-                                });
-                                await Task.WhenAll(episodeFileTasks);
-                            }
-                            
-                            await Task.Delay(100); // Delay between series
-                        }
-                        catch { }
-                        finally
-                        {
-                            seriesSemaphore.Release();
-                        }
-                    });
-                    await Task.WhenAll(tasks);
-                    sonarrEpisodes = sonarrEpisodesConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-                    sonarrEpisodesByTitle = sonarrEpisodesByTitleConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-                }
-                catch { }
-            }
-
-            if (_radarrService.IsEnabled && _radarrService.IsConnected)
-            {
-                try
-                {
-                    var movies = await _radarrService.GetMovies();
-                    var radarrMoviesConcurrent = new ConcurrentDictionary<string, RadarrMovie>();
-                    var radarrMoviesByTitleConcurrent = new ConcurrentDictionary<string, RadarrMovie>();
-                    var movieSemaphore = new SemaphoreSlim(50, 50);
-                    var movieTasks = movies.Select(async movie =>
-                    {
-                        await movieSemaphore.WaitAsync();
-                        try
-                        {
-                            if (movie.MovieFile != null && !string.IsNullOrEmpty(movie.MovieFile.Path))
-                            {
-                                var normalizedPath = NormalizePath(movie.MovieFile.Path);
-                                radarrMoviesConcurrent.TryAdd(normalizedPath, movie);
-                                
-                                // Also index by title for container-agnostic matching
-                                var normalizedTitle = NormalizeTitle(movie.MovieFile.Path);
-                                if (!string.IsNullOrEmpty(normalizedTitle))
-                                {
-                                    radarrMoviesByTitleConcurrent.TryAdd(normalizedTitle, movie);
-                                }
-                            }
-                        }
-                        finally
-                        {
-                            movieSemaphore.Release();
-                        }
-                    });
-                    await Task.WhenAll(movieTasks);
-                    radarrMovies = radarrMoviesConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-                    radarrMoviesByTitle = radarrMoviesByTitleConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-                }
-                catch { }
-            }
-
-            var matchedCount = 0;
-            var processedCount = 0;
-            var errorCount = 0;
-            const int videoBatchSize = 1000; // Larger batches for better performance
-            const int maxConcurrency = 20; // Increased concurrency for large libraries
-
-            var matchingSemaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-            var processedLock = new object();
-
-            // Process videos in batches
-            int skip = 0;
-            while (skip < totalVideos)
-            {
-                var videoBatch = await _dbContext.VideoAnalyses
-                    .Where(v => !string.IsNullOrEmpty(v.FilePath) && 
+            var result = await MatchVideosCoreAsync(
+                totalVideos,
+                options,
+                cache,
+                skip => _dbContext.VideoAnalyses
+                    .Where(v => !string.IsNullOrEmpty(v.FilePath) &&
                                (v.FilePath.Replace('\\', '/').ToLowerInvariant().StartsWith(libraryPathLower) ||
                                 v.FilePath.Replace('\\', '/').ToLowerInvariant().StartsWith(libraryPathLower + "/")))
                     .OrderBy(v => v.Id)
                     .Skip(skip)
-                    .Take(videoBatchSize)
-                    .ToListAsync();
+                    .Take(options.VideoBatchSize),
+                null,
+                null,
+                $"library path {libraryPath.Path}");
 
-                if (videoBatch.Count == 0) break;
+            return result.MatchedCount;
+        }
 
-                // Process videos in parallel with controlled concurrency
-                var batchTasks = videoBatch.Select(async video =>
+        private MatchingOptions LoadMatchingOptions()
+        {
+            return new MatchingOptions
+            {
+                SeriesConcurrency = _configuration.GetValue<int>("MatchingOptions:SeriesConcurrency", 20),
+                MovieConcurrency = _configuration.GetValue<int>("MatchingOptions:MovieConcurrency", 50),
+                VideoBatchSize = _configuration.GetValue<int>("MatchingOptions:VideoBatchSize", 2000),
+                SaveBatchSize = _configuration.GetValue<int>("MatchingOptions:SaveBatchSize", 200),
+                MaxMatchConcurrency = _configuration.GetValue<int>("MatchingOptions:MaxMatchConcurrency", 50)
+            };
+        }
+
+        private async Task<ServarrMatchCache> PreloadServarrDataAsync(MatchingOptions options)
+        {
+            _logger.LogInformation("Pre-loading Servarr data...");
+            var cache = new ServarrMatchCache();
+
+            await PreloadSonarrDataAsync(cache, options.SeriesConcurrency);
+            await PreloadRadarrDataAsync(cache, options.MovieConcurrency);
+
+            return cache;
+        }
+
+        private async Task PreloadSonarrDataAsync(ServarrMatchCache cache, int seriesConcurrency)
+        {
+            if (!_sonarrService.IsEnabled || !_sonarrService.IsConnected)
+            {
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("Loading Sonarr series and episodes...");
+                var seriesTask = _sonarrService.GetSeries();
+                var episodeFilesTask = _sonarrService.GetAllEpisodeFiles();
+                await Task.WhenAll(seriesTask, episodeFilesTask);
+
+                var allSeries = await seriesTask;
+                var allEpisodeFiles = await episodeFilesTask;
+                cache.SonarrSeries = allSeries.ToDictionary(s => s.Id, s => s);
+
+                var episodeFilesById = allEpisodeFiles
+                    .Where(ef => !string.IsNullOrEmpty(ef.Path))
+                    .GroupBy(ef => ef.Id)
+                    .ToDictionary(g => g.Key, g => g.First());
+
+                var sonarrEpisodesConcurrent = new ConcurrentDictionary<string, SonarrEpisode>();
+                var sonarrEpisodesByTitleConcurrent = new ConcurrentDictionary<string, SonarrEpisode>();
+                var seriesSemaphore = new SemaphoreSlim(seriesConcurrency, seriesConcurrency);
+
+                var tasks = allSeries.Select(async series =>
                 {
-                    await matchingSemaphore.WaitAsync();
+                    await seriesSemaphore.WaitAsync();
                     try
                     {
-                        var normalizedPath = NormalizePath(video.FilePath ?? string.Empty);
-                        var alreadyMatched = false;
-                        
-                        if (!string.IsNullOrEmpty(video.ServarrType))
+                        var episodes = await _sonarrService.GetEpisodesBySeries(series.Id);
+                        var episodeTasks = episodes.Select(episode => Task.Run(() =>
                         {
-                            if (video.ServarrType == "Sonarr" && sonarrEpisodes != null)
+                            string? path = null;
+                            if (!string.IsNullOrEmpty(episode.Path))
                             {
-                                alreadyMatched = sonarrEpisodes.ContainsKey(normalizedPath);
+                                path = episode.Path;
                             }
-                            else if (video.ServarrType == "Radarr" && radarrMovies != null)
+                            else if (episode.EpisodeFileId.HasValue &&
+                                     episodeFilesById.TryGetValue(episode.EpisodeFileId.Value, out var episodeFile))
                             {
-                                alreadyMatched = radarrMovies.ContainsKey(normalizedPath);
+                                path = episodeFile.Path;
                             }
-                        }
 
-                        if (!alreadyMatched)
-                        {
-                            var hadMatch = !string.IsNullOrEmpty(video.ServarrType);
-                            await MatchVideoWithServarrAsync(video, sonarrEpisodes, sonarrSeries, radarrMovies, 
-                                sonarrEpisodesByTitle, radarrMoviesByTitle);
-                            
-                            lock (processedLock)
+                            if (string.IsNullOrEmpty(path))
                             {
-                                if (!hadMatch && !string.IsNullOrEmpty(video.ServarrType))
-                                {
-                                    matchedCount++;
-                                }
-                                processedCount++;
+                                return;
                             }
-                        }
-                        else
-                        {
-                            lock (processedLock)
+
+                            var normalizedPath = PathNormalizer.Normalize(path);
+                            sonarrEpisodesConcurrent.TryAdd(normalizedPath, episode);
+
+                            var normalizedTitle = NormalizeTitle(path);
+                            if (!string.IsNullOrEmpty(normalizedTitle))
                             {
-                                processedCount++;
+                                sonarrEpisodesByTitleConcurrent.TryAdd(normalizedTitle, episode);
                             }
-                        }
+                        }));
+
+                        await Task.WhenAll(episodeTasks);
                     }
                     catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error loading episodes for series {SeriesId}: {Error}", series.Id, ex.Message);
+                    }
+                    finally
+                    {
+                        seriesSemaphore.Release();
+                    }
+                });
+
+                await Task.WhenAll(tasks);
+
+                cache.SonarrEpisodes = sonarrEpisodesConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+                cache.SonarrEpisodesByTitle = sonarrEpisodesByTitleConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+                _logger.LogInformation(
+                    "Loaded {SeriesCount} Sonarr series, {EpisodeCount} episode paths, {TitleCount} episode titles",
+                    allSeries.Count,
+                    cache.SonarrEpisodes.Count,
+                    cache.SonarrEpisodesByTitle.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error pre-loading Sonarr data");
+            }
+        }
+
+        private async Task PreloadRadarrDataAsync(ServarrMatchCache cache, int movieConcurrency)
+        {
+            if (!_radarrService.IsEnabled || !_radarrService.IsConnected)
+            {
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("Loading Radarr movies...");
+                var movies = await _radarrService.GetMovies();
+                var radarrMoviesConcurrent = new ConcurrentDictionary<string, RadarrMovie>();
+                var radarrMoviesByTitleConcurrent = new ConcurrentDictionary<string, RadarrMovie>();
+                var movieSemaphore = new SemaphoreSlim(movieConcurrency, movieConcurrency);
+
+                var movieTasks = movies.Select(async movie =>
+                {
+                    await movieSemaphore.WaitAsync();
+                    try
+                    {
+                        if (movie.MovieFile == null || string.IsNullOrEmpty(movie.MovieFile.Path))
+                        {
+                            return;
+                        }
+
+                        var normalizedPath = PathNormalizer.Normalize(movie.MovieFile.Path);
+                        radarrMoviesConcurrent.TryAdd(normalizedPath, movie);
+
+                        var normalizedTitle = NormalizeTitle(movie.MovieFile.Path);
+                        if (!string.IsNullOrEmpty(normalizedTitle))
+                        {
+                            radarrMoviesByTitleConcurrent.TryAdd(normalizedTitle, movie);
+                        }
+                    }
+                    finally
+                    {
+                        movieSemaphore.Release();
+                    }
+                });
+
+                await Task.WhenAll(movieTasks);
+                cache.RadarrMovies = radarrMoviesConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+                cache.RadarrMoviesByTitle = radarrMoviesByTitleConcurrent.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+                _logger.LogInformation(
+                    "Loaded {MovieCount} movie paths and {TitleCount} movie titles from Radarr",
+                    cache.RadarrMovies.Count,
+                    cache.RadarrMoviesByTitle.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error pre-loading Radarr data");
+            }
+        }
+
+        private async Task<MatchRunResult> MatchVideosCoreAsync(
+            int totalVideos,
+            MatchingOptions options,
+            ServarrMatchCache cache,
+            Func<int, IQueryable<VideoAnalysis>> getBatchQuery,
+            VideoMatchingProgressService? progressService,
+            string? matchId,
+            string scopeLabel)
+        {
+            _logger.LogInformation("Starting to match videos for {Scope}", scopeLabel);
+
+            var matchedCount = 0;
+            var processedCount = 0;
+            var errorCount = 0;
+            const int logInterval = 500;
+            const int progressUpdateInterval = 50;
+            var processedLock = new object();
+            var matchingSemaphore = new SemaphoreSlim(options.MaxMatchConcurrency, options.MaxMatchConcurrency);
+
+            void UpdateProgressIfNeeded(string? currentItem = null)
+            {
+                if (progressService == null || matchId == null)
+                {
+                    return;
+                }
+
+                if (processedCount == 1 || processedCount % progressUpdateInterval == 0 || processedCount == totalVideos)
+                {
+                    progressService.UpdateProgress(matchId, processedCount, totalVideos, matchedCount, errorCount, currentItem);
+                }
+            }
+
+            var skip = 0;
+            while (skip < totalVideos)
+            {
+                var videoBatch = await getBatchQuery(skip).ToListAsync();
+                if (videoBatch.Count == 0)
+                {
+                    break;
+                }
+
+                _logger.LogInformation(
+                    "Processing batch: {Skip} to {End} of {Total} videos for {Scope}",
+                    skip + 1,
+                    skip + videoBatch.Count,
+                    totalVideos,
+                    scopeLabel);
+
+                await MatchVideoBatchAsync(
+                    videoBatch,
+                    cache,
+                    matchingSemaphore,
+                    onProcessed: video =>
+                    {
+                        lock (processedLock)
+                        {
+                            processedCount++;
+                            UpdateProgressIfNeeded(System.IO.Path.GetFileName(video.FilePath));
+
+                            if (processedCount % logInterval == 0)
+                            {
+                                var percent = totalVideos > 0 ? (processedCount * 100 / totalVideos) : 0;
+                                _logger.LogInformation(
+                                    "Matching progress for {Scope}: {Processed}/{Total} ({Percent}%), {Matched} matched",
+                                    scopeLabel,
+                                    processedCount,
+                                    totalVideos,
+                                    percent,
+                                    matchedCount);
+                            }
+                        }
+                    },
+                    onNewMatch: () =>
+                    {
+                        lock (processedLock)
+                        {
+                            matchedCount++;
+                        }
+                    },
+                    onError: ex =>
                     {
                         lock (processedLock)
                         {
                             errorCount++;
                         }
-                        _logger.LogWarning(ex, "Error processing video {VideoId} ({FilePath})", video.Id, video.FilePath);
-                    }
-                    finally
-                    {
-                        matchingSemaphore.Release();
-                    }
-                });
 
-                await Task.WhenAll(batchTasks);
+                        _logger.LogWarning(ex, "Error while matching batch for {Scope}", scopeLabel);
+                    });
+
                 await _dbContext.SaveChangesAsync();
-                skip += videoBatchSize;
+
+                lock (processedLock)
+                {
+                    UpdateProgressIfNeeded();
+
+                    if (processedCount % options.SaveBatchSize < options.VideoBatchSize ||
+                        processedCount % logInterval < options.VideoBatchSize)
+                    {
+                        _logger.LogInformation(
+                            "Progress for {Scope}: {Processed}/{Total} processed, {Matched} matched",
+                            scopeLabel,
+                            processedCount,
+                            totalVideos,
+                            matchedCount);
+                    }
+                }
+
+                skip += options.VideoBatchSize;
             }
 
-            // Final save
-            await _dbContext.SaveChangesAsync();
-            _logger.LogInformation("Library path matching completed: {Processed}/{Total} processed, {Matched} matched, {Errors} errors for path {Path}", 
-                processedCount, totalVideos, matchedCount, errorCount, libraryPath.Path);
-            
-            return matchedCount;
+            if (_dbContext.ChangeTracker.HasChanges())
+            {
+                await _dbContext.SaveChangesAsync();
+            }
+            _logger.LogInformation(
+                "Video matching completed for {Scope}: {Processed}/{Total} processed, {Matched} matched, {Errors} errors",
+                scopeLabel,
+                processedCount,
+                totalVideos,
+                matchedCount,
+                errorCount);
+
+            return new MatchRunResult
+            {
+                MatchedCount = matchedCount,
+                ProcessedCount = processedCount,
+                ErrorCount = errorCount
+            };
         }
 
-        private string NormalizePath(string path)
+        private async Task MatchVideoBatchAsync(
+            List<VideoAnalysis> videos,
+            ServarrMatchCache cache,
+            SemaphoreSlim matchingSemaphore,
+            Action<VideoAnalysis> onProcessed,
+            Action onNewMatch,
+            Action<Exception> onError)
         {
-            if (string.IsNullOrEmpty(path)) return string.Empty;
-            return path.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
+            var videoPaths = new Dictionary<VideoAnalysis, string>();
+            foreach (var video in videos)
+            {
+                if (!string.IsNullOrEmpty(video.FilePath))
+                {
+                    videoPaths[video] = PathNormalizer.Normalize(video.FilePath);
+                }
+            }
+
+            var batchTasks = videos.Select(async video =>
+            {
+                await matchingSemaphore.WaitAsync();
+                try
+                {
+                    if (!videoPaths.TryGetValue(video, out var normalizedPath))
+                    {
+                        onProcessed(video);
+                        return;
+                    }
+
+                    var alreadyMatched = false;
+                    if (!string.IsNullOrEmpty(video.ServarrType))
+                    {
+                        if (video.ServarrType == "Sonarr" && cache.SonarrEpisodes != null)
+                        {
+                            alreadyMatched = cache.SonarrEpisodes.ContainsKey(normalizedPath);
+                        }
+                        else if (video.ServarrType == "Radarr" && cache.RadarrMovies != null)
+                        {
+                            alreadyMatched = cache.RadarrMovies.ContainsKey(normalizedPath);
+                        }
+                    }
+
+                    var hadMatch = !string.IsNullOrEmpty(video.ServarrType);
+                    if (!alreadyMatched)
+                    {
+                        await MatchVideoWithServarrAsync(
+                            video,
+                            cache.SonarrEpisodes,
+                            cache.SonarrSeries,
+                            cache.RadarrMovies,
+                            cache.SonarrEpisodesByTitle,
+                            cache.RadarrMoviesByTitle);
+                    }
+
+                    if (!hadMatch && !string.IsNullOrEmpty(video.ServarrType))
+                    {
+                        onNewMatch();
+                    }
+
+                    onProcessed(video);
+                }
+                catch (Exception ex)
+                {
+                    onError(ex);
+                }
+                finally
+                {
+                    matchingSemaphore.Release();
+                }
+            });
+
+            await Task.WhenAll(batchTasks);
+        }
+
+        private sealed class MatchingOptions
+        {
+            public int SeriesConcurrency { get; init; }
+            public int MovieConcurrency { get; init; }
+            public int VideoBatchSize { get; init; }
+            public int SaveBatchSize { get; init; }
+            public int MaxMatchConcurrency { get; init; }
+        }
+
+        private sealed class ServarrMatchCache
+        {
+            public Dictionary<string, SonarrEpisode>? SonarrEpisodes { get; set; }
+            public Dictionary<string, SonarrEpisode>? SonarrEpisodesByTitle { get; set; }
+            public Dictionary<int, SonarrSeries>? SonarrSeries { get; set; }
+            public Dictionary<string, RadarrMovie>? RadarrMovies { get; set; }
+            public Dictionary<string, RadarrMovie>? RadarrMoviesByTitle { get; set; }
+        }
+
+        private sealed class MatchRunResult
+        {
+            public int MatchedCount { get; init; }
+            public int ProcessedCount { get; init; }
+            public int ErrorCount { get; init; }
         }
 
         /// <summary>
@@ -809,8 +724,9 @@ namespace Optimarr.Services
                 // Normalize: lowercase, trim whitespace
                 return title.Trim().ToLowerInvariant();
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogDebug(ex, "Failed to normalize title from path: {Path}", path);
                 return string.Empty;
             }
         }

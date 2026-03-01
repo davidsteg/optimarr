@@ -213,6 +213,9 @@ namespace Optimarr.Controllers
             };
         }
 
+        /// <summary>
+        /// Returns the number of videos currently marked as processing.
+        /// </summary>
         [HttpGet("processing/count")]
         public async Task<ActionResult<int>> GetProcessingCount()
         {
@@ -226,10 +229,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting processing count");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns a paged list of videos currently in processing state.
+        /// </summary>
         [HttpGet("processing/videos")]
         public async Task<ActionResult<object>> GetProcessingVideos([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
@@ -270,10 +276,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting processing videos");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns IDs of videos currently marked as processing.
+        /// </summary>
         [HttpGet("processing/videos/ids")]
         public async Task<ActionResult<int[]>> GetProcessingVideoIds()
         {
@@ -289,10 +298,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting processing video IDs");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Queues rescans for selected videos that are currently processing.
+        /// </summary>
         [HttpPost("processing/videos/rescan")]
         public async Task<ActionResult> RescanProcessingVideos([FromBody] RedownloadRequest request)
         {
@@ -459,7 +471,7 @@ namespace Optimarr.Controllers
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Error rescanning processing video ID {VideoId}", video.Id);
-                        result.Message = $"Error: {ex.Message}";
+                        result.Message = "An internal error occurred. Check logs for details.";
                     }
                     finally
                     {
@@ -486,6 +498,9 @@ namespace Optimarr.Controllers
             });
         }
 
+        /// <summary>
+        /// Deletes selected videos from the processing set.
+        /// </summary>
         [HttpPost("processing/videos/delete")]
         public async Task<ActionResult> DeleteProcessingVideos([FromBody] RedownloadRequest request)
         {
@@ -519,6 +534,9 @@ namespace Optimarr.Controllers
             });
         }
 
+        /// <summary>
+        /// Starts a new library scan for a provided path request.
+        /// </summary>
         [HttpPost("scan")]
         public async Task<ActionResult<LibraryScan>> StartScan([FromBody] ScanRequest request)
         {
@@ -532,10 +550,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error starting library scan");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Starts a rescan for a specific saved library path ID.
+        /// </summary>
         [HttpPost("rescan/{libraryPathId}")]
         public async Task<ActionResult<LibraryScan>> RescanLibrary(int libraryPathId)
         {
@@ -560,10 +581,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error rescanning library");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Starts a rescan using an ad-hoc library path request.
+        /// </summary>
         [HttpPost("rescan")]
         public async Task<ActionResult<LibraryScan>> RescanLibraryByPath([FromBody] RescanRequest request)
         {
@@ -577,10 +601,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error rescanning library");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Browses directories for library path selection in the UI.
+        /// </summary>
         [HttpGet("browse")]
         public IActionResult BrowseDirectory([FromQuery] string? path = null)
         {
@@ -658,7 +685,7 @@ namespace Optimarr.Controllers
                     return Ok(new DirectoryBrowseResponse
                     {
                         CurrentPath = browsePath,
-                        Error = $"Access denied: {ex.Message}"
+                        Error = "Access denied. Check logs for details."
                     });
                 }
                 catch (SecurityException ex)
@@ -666,7 +693,7 @@ namespace Optimarr.Controllers
                     return Ok(new DirectoryBrowseResponse
                     {
                         CurrentPath = browsePath,
-                        Error = $"Security error: {ex.Message}"
+                        Error = "Security error. Check logs for details."
                     });
                 }
 
@@ -683,11 +710,14 @@ namespace Optimarr.Controllers
                 return Ok(new DirectoryBrowseResponse
                 {
                     CurrentPath = path ?? "",
-                    Error = $"Error: {ex.Message}"
+                    Error = "An internal error occurred. Check logs for details."
                 });
             }
         }
 
+        /// <summary>
+        /// Deletes a configured library path and related scan records.
+        /// </summary>
         [HttpDelete("paths/{id}")]
         public async Task<ActionResult> DeleteLibraryPath(int id)
         {
@@ -757,10 +787,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error deleting library path");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns all configured library paths.
+        /// </summary>
         [HttpGet("paths")]
         public async Task<ActionResult<List<LibraryPathInfo>>> GetLibraryPaths()
         {
@@ -800,6 +833,9 @@ namespace Optimarr.Controllers
             return Ok(result);
         }
 
+        /// <summary>
+        /// Returns recent and active library scan records.
+        /// </summary>
         [HttpGet("scans")]
         public async Task<ActionResult<List<LibraryScan>>> GetScans()
         {
@@ -811,6 +847,9 @@ namespace Optimarr.Controllers
             return Ok(scans);
         }
 
+        /// <summary>
+        /// Returns details and progress for a specific scan ID.
+        /// </summary>
         [HttpGet("scans/{id}")]
         public async Task<ActionResult<ScanProgress>> GetScan(int id)
         {
@@ -881,6 +920,9 @@ namespace Optimarr.Controllers
             });
         }
 
+        /// <summary>
+        /// Cancels an in-progress scan by ID.
+        /// </summary>
         [HttpPost("scans/{id}/cancel")]
         public async Task<ActionResult> CancelScan(int id)
         {
@@ -888,6 +930,9 @@ namespace Optimarr.Controllers
             return Ok(new { message = "Scan cancellation requested" });
         }
 
+        /// <summary>
+        /// Returns dashboard summary statistics for analyzed media.
+        /// </summary>
         [HttpGet("dashboard/stats")]
         public async Task<ActionResult<DashboardStats>> GetDashboardStats()
         {
@@ -1137,10 +1182,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error loading dashboard stats");
-                return StatusCode(500, new { error = $"Failed to load dashboard stats: {ex.Message}" });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns compatibility breakdown data used by dashboard charts.
+        /// </summary>
         [HttpGet("dashboard/compatibility")]
         public async Task<ActionResult<CompatibilityBreakdown>> GetCompatibilityBreakdown()
         {
@@ -1165,6 +1213,9 @@ namespace Optimarr.Controllers
             });
         }
 
+        /// <summary>
+        /// Returns top compatibility issues for dashboard display.
+        /// </summary>
         [HttpGet("dashboard/issues")]
         public async Task<ActionResult<object>> GetTopIssues([FromQuery] int limit = 10)
         {
@@ -1212,6 +1263,9 @@ namespace Optimarr.Controllers
         }
 
 
+        /// <summary>
+        /// Returns paged analyzed videos with filtering and sorting options.
+        /// </summary>
         [HttpGet("videos")]
         public async Task<ActionResult<PagedResult<VideoAnalysis>>> GetVideos(
             [FromQuery] int page = 1,
@@ -1545,10 +1599,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error loading videos");
-                return StatusCode(500, new { error = "Failed to load videos", message = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns analyzed video IDs matching filter criteria.
+        /// </summary>
         [HttpGet("videos/ids")]
         public async Task<ActionResult<List<int>>> GetVideoIds(
             [FromQuery] string? codec = null,
@@ -1802,10 +1859,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting video IDs");
-                return StatusCode(500, new { error = "Failed to get video IDs", message = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns available filter options for the video browser UI.
+        /// </summary>
         [HttpGet("videos/filters")]
         public async Task<ActionResult<FilterOptions>> GetFilterOptions()
         {
@@ -1870,6 +1930,9 @@ namespace Optimarr.Controllers
             });
         }
 
+        /// <summary>
+        /// Returns compatibility rating settings used for score classification.
+        /// </summary>
         [HttpGet("settings/rating")]
         public ActionResult<RatingSettings> GetRatingSettings()
         {
@@ -1881,6 +1944,9 @@ namespace Optimarr.Controllers
             });
         }
 
+        /// <summary>
+        /// Saves compatibility rating settings and triggers recalculation flows as needed.
+        /// </summary>
         [HttpPost("settings/rating")]
         public async Task<ActionResult> SaveRatingSettings([FromBody] RatingSettings settings)
         {
@@ -1993,12 +2059,15 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error saving rating settings");
-                return StatusCode(500, new { error = $"Failed to save rating settings: {ex.Message}" });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
 
 
+        /// <summary>
+        /// Returns media property support and rating weight settings.
+        /// </summary>
         [HttpGet("settings/media-properties")]
         public ActionResult<object> GetMediaPropertySettings()
         {
@@ -2035,10 +2104,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error loading media property settings");
-                return StatusCode(500, new { error = $"Failed to load media property settings: {ex.Message}" });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Saves media property support and rating weight settings.
+        /// </summary>
         [HttpPost("settings/media-properties")]
         public async Task<ActionResult> SaveMediaPropertySettings([FromBody] MediaPropertySettingsRequest request)
         {
@@ -2328,7 +2400,7 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error saving media property settings");
-                return StatusCode(500, new { error = $"Failed to save media property settings: {ex.Message}" });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
@@ -2524,6 +2596,9 @@ namespace Optimarr.Controllers
             return allSubtitles.FirstOrDefault();
         }
 
+        /// <summary>
+        /// Re-analyzes a specific video by analysis record ID.
+        /// </summary>
         [HttpPost("videos/{id}/rescan")]
         public async Task<ActionResult<VideoAnalysis>> RescanVideo(int id)
         {
@@ -2580,7 +2655,7 @@ namespace Optimarr.Controllers
                 catch (Exception analysisEx)
                 {
                     _logger.LogError(analysisEx, "Video analysis failed for ID {Id}", id);
-                    return StatusCode(500, new { error = $"Video analysis failed: {analysisEx.Message}" });
+                    return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
                 }
                 
                 // Check if request was cancelled before processing results
@@ -2728,10 +2803,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error rescanning video ID {Id}", id);
-                return StatusCode(500, new { error = $"Failed to rescan video: {ex.Message}" });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Receives Tdarr webhook events and queues related rescans.
+        /// </summary>
         [HttpPost("webhook/tdarr")]
         public async Task<ActionResult> TdarrWebhook([FromBody] TdarrWebhookRequest request)
         {
@@ -2875,7 +2953,7 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing Tdarr webhook");
-                return StatusCode(500, new { error = $"Failed to process webhook: {ex.Message}" });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
@@ -2914,6 +2992,9 @@ namespace Optimarr.Controllers
             }
         }
 
+        /// <summary>
+        /// Re-analyzes a set of selected videos.
+        /// </summary>
         [HttpPost("videos/rescan")]
         public async Task<ActionResult> RescanVideos([FromBody] RedownloadRequest request)
         {
@@ -3080,7 +3161,7 @@ namespace Optimarr.Controllers
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Error rescanning video {VideoId}", video.Id);
-                        result.Message = $"Error: {ex.Message}";
+                        result.Message = "An internal error occurred. Check logs for details.";
                     }
 
                     lock (results) { results.Add(result); }
@@ -3103,6 +3184,9 @@ namespace Optimarr.Controllers
             });
         }
 
+        /// <summary>
+        /// Re-analyzes all videos currently marked as broken.
+        /// </summary>
         [HttpPost("videos/rescan-broken")]
         public async Task<ActionResult<object>> RescanAllBrokenVideos()
         {
@@ -3244,10 +3328,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error starting rescan of broken videos");
-                return StatusCode(500, new { error = $"Failed to start rescan: {ex.Message}" });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns subtitle diagnostics for a specific video.
+        /// </summary>
         [HttpGet("videos/{id}/debug-subtitles")]
         public async Task<ActionResult<object>> DebugSubtitles(int id)
         {
@@ -3308,10 +3395,13 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error debugging subtitles for video ID {Id}", id);
-                return StatusCode(500, new { error = $"Failed to debug subtitles: {ex.Message}" });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
+        /// <summary>
+        /// Returns a detailed analyzed video record by ID.
+        /// </summary>
         [HttpGet("videos/{id}")]
         public async Task<ActionResult<VideoAnalysis>> GetVideo(int id)
         {
@@ -3358,7 +3448,7 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error loading video {VideoId}", id);
-                return StatusCode(500, new { error = "Failed to load video", message = ex.Message });
+                return StatusCode(500, new { error = "An internal error occurred. Check logs for details." });
             }
         }
 
@@ -3415,7 +3505,7 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing Sonarr redownload for episode {EpisodeId}", episode.Id);
-                result.Message = $"Error: {ex.Message}";
+                result.Message = "An internal error occurred. Check logs for details.";
                 return false;
             }
         }
@@ -3473,11 +3563,14 @@ namespace Optimarr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing Radarr redownload for movie {MovieId}", movie.Id);
-                result.Message = $"Error: {ex.Message}";
+                result.Message = "An internal error occurred. Check logs for details.";
                 return false;
             }
         }
 
+        /// <summary>
+        /// Triggers Servarr searches for selected videos to attempt improved replacements.
+        /// </summary>
         [HttpPost("videos/redownload")]
         public async Task<ActionResult> RedownloadVideos([FromBody] RedownloadRequest request)
         {
@@ -3612,7 +3705,7 @@ namespace Optimarr.Controllers
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Error processing redownload for video {VideoId}", video.Id);
-                        result.Message = $"Error: {ex.Message}";
+                        result.Message = "An internal error occurred. Check logs for details.";
                         lock (results) { results.Add(result); }
                     }
                 }

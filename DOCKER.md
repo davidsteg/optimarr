@@ -100,13 +100,32 @@ If Servarr apps are on the host or another machine:
 
 ## Development
 
-### Development Mode with Hot Reload
+### Development Container (`docker-compose.dev.yml`)
 
 ```bash
-docker-compose -f docker-compose.dev.yml up
+docker compose -f docker-compose.dev.yml up --build
 ```
 
-This mounts the source code and enables hot reload.
+What this does:
+- Builds from `Dockerfile.dev` (SDK image + `dotnet watch`)
+- Runs Optimarr on internal port `8080` (mapped to host `5000`)
+- Bind-mounts source code into `/app` for hot reload
+- Persists runtime state with bind mounts:
+  - `./config` -> `/app/config`
+  - `./data` -> `/app/data`
+  - `./logs` -> `/app/logs`
+  - `./videos` -> `/videos` (read-only)
+
+Configuration behavior:
+- The app first looks for `/app/config/appsettings.json`
+- If missing, it falls back to `/app/appsettings.json`
+- For Docker-based development, keep `./config/appsettings.json` as your primary runtime config
+
+Pointing to local Sonarr/Radarr:
+- If Sonarr/Radarr run on your host machine, use `host.docker.internal` in `config/appsettings.json`:
+  - `http://host.docker.internal:8989` (Sonarr)
+  - `http://host.docker.internal:7878` (Radarr)
+- If they run in Docker, connect services to the same network and use container names.
 
 ### View Logs
 
@@ -129,39 +148,91 @@ docker-compose down
 
 ## Troubleshooting
 
-### MediaInfo Not Working
+### Health check failing
 
-If you get errors about MediaInfo libraries:
+1. Inspect container health:
+   ```bash
+   docker ps
+   docker inspect --format='{{json .State.Health}}' optimarr
+   ```
+2. Verify API endpoints manually:
+   ```bash
+   curl -i http://localhost:5000/api/system/health
+   curl -i http://localhost:5000/api/system/ready
+   ```
+3. If `/ready` returns `503`, migrations are still running or failed; check logs for migration status details.
 
-1. Check the container logs:
+### How to view logs
+
+Use one of these depending on your workflow:
+
+```bash
+# Single container
+docker logs -f optimarr
+
+# Compose
+docker compose logs -f optimarr
+```
+
+Logs are also persisted to host `./logs` when that volume is mounted.
+
+### Reset the database safely
+
+Stop the app, remove the SQLite database file, then start again:
+
+```bash
+docker compose down
+rm -f ./data/optimarr.db
+docker compose up -d
+```
+
+On next startup, Optimarr recreates schema and reruns startup migrations.
+
+### Update config without rebuilding
+
+1. Edit `./config/appsettings.json` on the host.
+2. Restart the container (no image rebuild needed):
+   ```bash
+   docker compose restart optimarr
+   ```
+
+Optimarr reads runtime config from `/app/config/appsettings.json` when mounted.
+
+### Permission errors with mounted volumes
+
+Symptoms include failures writing to `/app/data` or `/app/logs`.
+
+Checks and fixes:
+
+```bash
+# Check host directory ownership/permissions
+ls -la ./config ./data ./logs
+
+# Linux example: grant current user ownership
+sudo chown -R $(id -u):$(id -g) ./config ./data ./logs
+```
+
+For development, `docker-compose.dev.yml` runs as UID `1000`; ensure mounted paths are writable by that UID.
+
+### MediaInfo not working
+
+If MediaInfo-related analysis fails:
+
+1. Check logs:
    ```bash
    docker logs optimarr
    ```
-
-2. Verify libraries are installed:
+2. Verify package availability inside container:
    ```bash
    docker exec optimarr dpkg -l | grep mediainfo
    ```
 
-3. If needed, rebuild with updated dependencies.
+### Port already in use
 
-### Port Already in Use
-
-Change the host port:
+Map a different host port:
 
 ```bash
 docker run -d -p 8080:8080 optimarr
-```
-
-### Permission Issues
-
-If you need to access host files, ensure proper permissions:
-
-```bash
-docker run -d \
-  --user $(id -u):$(id -g) \
-  -v /path/to/videos:/videos:ro \
-  optimarr
 ```
 
 ## Production Deployment
@@ -184,11 +255,15 @@ docker push your-registry/optimarr:latest
 
 ### Health Check
 
-The application doesn't include a health check endpoint by default. You can add one or use:
+The container health check is built in and migration-aware:
+- During startup migrations, Docker health check allows the container to continue starting.
+- After migration completes, health requires `GET /api/system/health` to return success.
+
+You can still override it at runtime if needed:
 
 ```bash
 docker run -d \
-  --health-cmd="curl -f http://localhost:8080 || exit 1" \
+  --health-cmd="curl -f http://localhost:8080/api/system/health || exit 1" \
   --health-interval=30s \
   optimarr
 ```
