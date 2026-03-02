@@ -18,27 +18,31 @@ export async function checkMigrationStatus() {
             return;
         }
         
-        updateMigrationBanner(progress);
-        
+        // Show banner only while migration is actively running, or when an error occurs.
+        // Do not show completed state on page refresh.
+        const isActiveMigration =
+            progress.status === 'checking' ||
+            progress.status === 'creating' ||
+            progress.status === 'migrating';
+        const isError = progress.status === 'error';
+
+        if (isActiveMigration || isError) {
+            updateMigrationBanner(progress);
+        } else {
+            hideMigrationBanner();
+        }
+
         // If migration is in progress, poll for updates
-        if (progress.status === 'checking' || progress.status === 'creating' || progress.status === 'migrating') {
+        if (isActiveMigration) {
             if (!migrationCheckInterval) {
                 migrationCheckInterval = setInterval(checkMigrationStatus, 1000); // Poll every second
             }
         } else {
-            // Migration completed or error, stop polling
+            // Migration completed/idle/error (not actively running), stop polling
             if (migrationCheckInterval) {
                 clearInterval(migrationCheckInterval);
                 migrationCheckInterval = null;
             }
-            
-            // Hide banner after 5 seconds if completed (but not for errors)
-            if (progress.status === 'completed') {
-                setTimeout(() => {
-                    hideMigrationBanner();
-                }, 5000);
-            }
-            // Error status should persist - don't auto-hide
         }
     } catch (error) {
         console.error('Error checking migration status:', error);

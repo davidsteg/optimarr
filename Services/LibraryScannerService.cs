@@ -474,7 +474,7 @@ namespace Optimarr.Services
                                 failedFiles.Add((
                                     filePath,
                                     Path.GetFileName(filePath),
-                                    ex.Message,
+                                    GetClientSafeFailedFileMessage(ex),
                                     ex.GetType().Name,
                                     File.Exists(filePath) ? new FileInfo(filePath).Length : null
                                 ));
@@ -841,6 +841,13 @@ namespace Optimarr.Services
             }
             catch (Exception ex)
             {
+                // Permission-restricted files should be treated as scan failures, not broken media.
+                if (IsPermissionRelatedException(ex))
+                {
+                    _logger.LogWarning("Permission-related analysis failure for file {FilePath}; classifying as failed scan item (not broken media)", filePath);
+                    throw;
+                }
+
                 _logger.LogError(ex, ">>> ERROR in AnalyzeAndStoreAsync for: {FilePath}", filePath);
                 _logger.LogError("Exception type: {Type}, Message: {Message}", ex.GetType().Name, ex.Message);
                 _logger.LogError("Stack trace: {StackTrace}", ex.StackTrace);
@@ -885,6 +892,33 @@ namespace Optimarr.Services
                     // Don't throw - we've logged the error
                 }
             }
+        }
+
+        private static bool IsPermissionRelatedException(Exception ex)
+        {
+            if (ex is UnauthorizedAccessException)
+            {
+                return true;
+            }
+
+            if (ex.InnerException is UnauthorizedAccessException)
+            {
+                return true;
+            }
+
+            var message = ex.Message ?? string.Empty;
+            return message.Contains("access", StringComparison.OrdinalIgnoreCase) &&
+                   message.Contains("denied", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GetClientSafeFailedFileMessage(Exception ex)
+        {
+            if (IsPermissionRelatedException(ex))
+            {
+                return "File access is restricted. Check permissions and retry.";
+            }
+
+            return "File analysis failed. Check logs for details.";
         }
 
         private IEnumerable<string> GetVideoFiles(string directory)

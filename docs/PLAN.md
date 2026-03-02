@@ -55,6 +55,150 @@ namespace Optimarr.Services
 
 ---
 
+## RQ-A1 — Feature Request Architecture Mapping (`FR-20260302-01`)
+
+### Problem statement
+
+`FR-20260302-01` requests three coupled capabilities:
+1. Detect compatibility quality regressions early and surface actionable alerts.
+2. Make scoring playback-aware so ratings reflect real-world playback outcomes over time.
+3. Run periodic refresh jobs automatically without manual operator actions.
+
+Current gaps:
+- No persisted regression baseline model or alert lifecycle.
+- Rating pipeline is media-property based only; playback-history signal is not part of score output.
+- No config-driven scheduler for periodic alert/score refresh loops.
+
+### Approach options
+
+#### Option A (selected): In-process pipeline with persisted alert state and hosted scheduler
+- Add persistent regression artifacts in SQLite.
+- Extend scoring service with optional playback-aware weighting.
+- Use ASP.NET hosted background scheduler with config-driven cadence and overlap protection.
+- Keep API/UI incremental and backward-compatible.
+
+Pros:
+- Aligns with current architecture (`Controller -> Service -> DbContext`).
+- No new infrastructure dependency.
+- Deterministic and testable with existing service patterns.
+
+Cons:
+- Requires careful job coordination and migration changes.
+- Must guard against noisy alerts in early rollout.
+
+#### Option B (rejected): External scheduler + out-of-process workers
+Pros:
+- Better operational isolation and horizontal scaling.
+Cons:
+- Adds deployment complexity and operational burden outside current project model.
+- Over-scoped for next minor release window.
+
+#### Option C (rejected): Playback-aware scoring only (no alert persistence)
+Pros:
+- Lowest implementation complexity.
+Cons:
+- Does not satisfy regression-detection ask; no lifecycle for triage/ack/resolution.
+
+### Selected architecture and flow
+
+1. **Baseline + regression detection service**
+   - Introduce `QualityRegressionService` to compute deltas between latest score and baseline snapshot.
+   - Emit/update alerts with dedupe key `(VideoAnalysisId, RuleId, BaselineVersion)`.
+   - Alert states: `New`, `Acknowledged`, `Resolved`, `Reopened`.
+
+2. **Playback-aware scoring extension**
+   - Extend `MediaPropertyRatingService` output with:
+     - `BaseScore` (existing property-based score)
+     - `PlaybackAdjustment`
+     - `EffectiveScore`
+     - `ScoreExplanation[]`
+   - Weight playback impact by confidence:
+     - sparse history -> capped impact
+     - sufficient history -> full configured impact range
+
+3. **Scheduler orchestration**
+   - Add `RegressionSchedulerService : BackgroundService`.
+   - Jobs:
+     - periodic regression scan
+     - periodic playback-aware score refresh
+   - Non-overlap execution guard per job key, cancellation support, jittered retry/backoff.
+
+### API/data/model/config touchpoints
+
+#### API touchpoints
+- `GET /api/alerts` (filter by status/severity/date)
+- `POST /api/alerts/{id}/acknowledge`
+- `POST /api/alerts/{id}/resolve`
+- `GET /api/scoring/playback/explain/{videoId}`
+- `GET /api/scheduler/status`
+
+#### Data/model touchpoints
+- New model/entity: `QualityRegressionAlert`
+- New model/entity: `QualityScoreSnapshot` (or equivalent persisted baseline)
+- Optional additive fields on `VideoAnalysis`:
+  - `EffectiveCompatibilityRating`
+  - `PlaybackScoreAdjustment`
+  - `LastPlaybackWeightedAt`
+- EF touchpoints: `Data/AppDbContext.cs` + migration SQL under `Data/Migrations/`
+
+#### Service touchpoints
+- `Services/MediaPropertyRatingService.cs` (playback-aware composition)
+- New `Services/QualityRegressionService.cs`
+- New `Services/RegressionSchedulerService.cs`
+- `Services/PlaybackSyncService.cs` integration hook to trigger targeted recalculation when new history arrives
+
+#### Config touchpoints
+- `appsettings.json` + `config/appsettings.json`:
+  - `Alerts` (enable, regression threshold, dedupe window, severity bands)
+  - `PlaybackScoring` (enable, min-history threshold, max adjustment cap, recency weighting)
+  - `Scheduling` (enable, cron/interval, retry/backoff, max concurrent jobs)
+- Documentation touchpoint: `config/README.md`
+
+### Risks and mitigations
+
+- **Risk: noisy/duplicate alerts**
+  - Mitigation: deterministic dedupe key, cooldown window, state transition rules, QA boundary tests.
+- **Risk: score volatility with sparse playback history**
+  - Mitigation: confidence gating and adjustment cap; explicit fallback to base score.
+- **Risk: scheduler overlap / runaway jobs**
+  - Mitigation: per-job lock, cancellation token propagation, max runtime guard, structured job telemetry.
+- **Risk: API contract drift**
+  - Mitigation: additive endpoints/payload fields only; preserve existing score field semantics for backward compatibility.
+- **Risk: migration complexity**
+  - Mitigation: explicit forward-only SQL migration + startup migration verification in existing migration pipeline.
+
+### Acceptance criteria (RQ-A1 architecture)
+
+- [ ] Design specifies one selected approach with explicit rejected alternatives.
+- [ ] API endpoints, model additions, service additions, and config keys are concrete and implementation-ready.
+- [ ] Alert lifecycle and dedupe rules are unambiguous.
+- [ ] Playback-aware scoring fallback behavior is defined for sparse/no history.
+- [ ] Scheduler semantics (cadence, overlap, retry, cancellation, status visibility) are defined.
+- [ ] Execution/testing handoff maps directly to file-level tasks.
+
+### Implementation/testing handoff checklist
+
+#### Execution (Agent 3)
+- [ ] Implement alert entities + EF wiring + migration (`Models/*`, `Data/AppDbContext.cs`, `Data/Migrations/*`) — depends on this `RQ-A1` design.
+- [ ] Implement `QualityRegressionService` and integrate with scoring pipeline (`Services/*`).
+- [ ] Implement playback-aware scoring extension in `MediaPropertyRatingService` with config toggles.
+- [ ] Implement `RegressionSchedulerService` and register in `Program.cs` with graceful cancellation.
+- [ ] Implement alert/scoring/scheduler API endpoints in `Controllers/*` (additive, backward-compatible).
+- [ ] Add config defaults/docs in `appsettings.json`, `config/appsettings.json`, `config/README.md`.
+
+#### QA (Agent 5)
+- [ ] Unit tests: regression detection threshold boundaries and dedupe/lifecycle transitions.
+- [ ] Unit tests: playback-aware weighting for no/sparse/rich history cases.
+- [ ] Integration tests: scheduler cadence, non-overlap, cancellation/shutdown behavior.
+- [ ] API tests: alert list/filter/ack/resolve and playback explanation schema.
+
+#### Security (Agent 8)
+- [ ] Validate new alert/scheduler endpoints are covered by API key middleware policy.
+- [ ] Validate playback-derived API fields/logs do not expose sensitive internals.
+- [ ] Validate scheduler config inputs are bounded and safe against abuse/misconfiguration.
+
+---
+
 ## Release Gate Plan (2026-03-01)
 
 ### Goal

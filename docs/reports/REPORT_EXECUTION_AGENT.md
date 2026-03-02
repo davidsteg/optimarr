@@ -307,3 +307,99 @@ Use `docs/reports/REPORT_TEMPLATE.md` and append dated sections below.
 - `ReadLints` on touched files
 - Result:
 - No remaining controller/API payload exposure of internal exception details; lint diagnostics clean.
+
+---
+
+## 2026-03-01
+
+### Agent Report - Execution Agent
+
+## Scope
+- Task ID(s): RQ-E1, RQ-E2, RQ-E3
+- Request summary: Implement minimal/safe bug fixes for migration banner refresh behavior, broken-only filter correctness, and restricted-file permission handling.
+- Files in scope: `wwwroot/js/migration.js`, `Controllers/LibraryController.cs`, `Services/LibraryScannerService.cs`, `docs/TASKS.md`, `docs/CHANGELOG.md`, `docs/reports/REPORT_EXECUTION_AGENT.md`
+
+## Actions Taken
+- `RQ-E1`: Updated migration banner flow to render only for active migration states (`checking`, `creating`, `migrating`) and error state; completed/idle states now hide banner immediately and stop polling.
+- `RQ-E2`: Hardened filter correctness by re-applying `isBroken` constraints after in-memory transformations in both `/api/library/videos` and `/api/library/videos/ids`.
+- `RQ-E3`: Added permission-aware handling in scanner analysis flow so permission-related exceptions are treated as failed scan items rather than creating/updating broken media records by default.
+- Added targeted log warning for permission-related analysis failures without altering existing API contracts.
+- Updated task tracking and changelog entries for all three request fixes.
+
+## Findings
+### BLOCKING
+- None.
+
+### WARNING
+- Runtime integration validation remains environment-limited if `.NET SDK` is unavailable; code-level checks were completed.
+
+### APPROVED
+- All three requested request-driven bug fixes are implemented with minimal surface-area change and no API contract expansion.
+
+## Artifacts
+- Files created/updated:
+- Updated: `wwwroot/js/migration.js`, `Controllers/LibraryController.cs`, `Services/LibraryScannerService.cs`, `docs/TASKS.md`, `docs/CHANGELOG.md`, `docs/reports/REPORT_EXECUTION_AGENT.md`
+- Report file: `docs/reports/REPORT_EXECUTION_AGENT.md`
+- Changelog entry: `docs/CHANGELOG.md` (`[Unreleased]` section)
+
+## Open Issues / Next Steps
+- QA follow-up: run regression checks for:
+- migration banner state transitions on refresh,
+- broken-only browse results with/without score filters,
+- restricted-permission file scan behavior (failed item, not broken classification).
+
+## Verification
+- Checks run:
+- `ReadLints` on changed files
+- Result:
+- No linter issues reported for edited files in this pass.
+
+---
+
+## 2026-03-02
+
+### Agent Report - Execution Agent
+
+## Scope
+- Task ID(s): RQ-E3 (security follow-up remediation)
+- Request summary: Remove client-facing raw exception text from failed-file/status payload paths while preserving permission-handling intent.
+- Files in scope: `Services/LibraryScannerService.cs`, `Controllers/LibraryController.cs`, `docs/TASKS.md`, `docs/CHANGELOG.md`, `docs/reports/REPORT_EXECUTION_AGENT.md`
+
+## Actions Taken
+- Sanitized failed-file persistence path in `LibraryScannerService`:
+- replaced stored `FailedFile.ErrorMessage` source from raw `ex.Message` to client-safe mapped text.
+- preserved full exception details in server logs via existing `_logger.LogError(ex, ...)` calls.
+- Sanitized failed-file response mapping in `LibraryController` scan status endpoint:
+- `GET /api/library/scans/{id}` now maps `FailedFilesList.ErrorMessage` through a client-safe sanitizer to prevent legacy/raw message disclosure.
+- Preserved RQ-E3 intended behavior:
+- permission-related analysis exceptions still become failed scan items and do not classify media as broken by default.
+- Updated `docs/TASKS.md`:
+- marked `RQ-E3` as complete with evidence note,
+- updated RQ security gate line to `PENDING RE-REVIEW` after remediation.
+
+## Findings
+### BLOCKING
+- None at code-remediation level.
+
+### WARNING
+- Security re-review (`RQ-R1`) and QA retest (`RQ-Q1`) remain required for formal cycle signoff.
+
+### APPROVED
+- Client payload disclosure path in RQ-E3 is remediated at both write-time and read-time surfaces.
+
+## Artifacts
+- Files created/updated:
+- Updated: `Services/LibraryScannerService.cs`, `Controllers/LibraryController.cs`, `docs/TASKS.md`, `docs/CHANGELOG.md`, `docs/reports/REPORT_EXECUTION_AGENT.md`
+- Report file: `docs/reports/REPORT_EXECUTION_AGENT.md`
+- Changelog entry: `docs/CHANGELOG.md` (`[Unreleased]` section)
+
+## Open Issues / Next Steps
+- Request Security to re-run `RQ-R1` and confirm gate outcome after this remediation.
+- Request QA to extend/execute `RQ-Q1` payload-sanitization assertion for `FailedFilesList.ErrorMessage`.
+
+## Verification
+- Checks run:
+- `ReadLints` on touched files
+- targeted repository search to confirm no `ex.Message` persistence in failed-file write path
+- Result:
+- edited files are lint-clean; RQ-E3 failed-file payload path now returns sanitized text.

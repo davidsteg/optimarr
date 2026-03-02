@@ -891,7 +891,7 @@ namespace Optimarr.Controllers
                 {
                     FileName = f.FileName ?? System.IO.Path.GetFileName(f.FilePath),
                     FilePath = f.FilePath,
-                    ErrorMessage = f.ErrorMessage,
+                    ErrorMessage = GetClientSafeFailedFileMessage(f.ErrorType, f.ErrorMessage),
                     ErrorType = f.ErrorType,
                     FailedAt = f.FailedAt,
                     FileSize = f.FileSize
@@ -918,6 +918,24 @@ namespace Optimarr.Controllers
                 LastAnalyzedAt = lastAnalyzed?.AnalyzedAt,
                 FailedFilesList = failedFilesList ?? new List<FailedFileInfo>()
             });
+        }
+
+        private static string GetClientSafeFailedFileMessage(string? errorType, string? rawMessage)
+        {
+            if (!string.IsNullOrWhiteSpace(errorType) &&
+                errorType.Contains("UnauthorizedAccessException", StringComparison.OrdinalIgnoreCase))
+            {
+                return "File access is restricted. Check permissions and retry.";
+            }
+
+            var message = rawMessage ?? string.Empty;
+            if (message.Contains("access", StringComparison.OrdinalIgnoreCase) &&
+                message.Contains("denied", StringComparison.OrdinalIgnoreCase))
+            {
+                return "File access is restricted. Check permissions and retry.";
+            }
+
+            return "File analysis failed. Check logs for details.";
         }
 
         /// <summary>
@@ -1539,6 +1557,13 @@ namespace Optimarr.Controllers
                     }).ToList();
                 }
 
+                // Re-apply broken filter after in-memory transforms for correctness.
+                // This keeps "broken-only" results strict even after score recalculation and dedup.
+                if (isBroken.HasValue)
+                {
+                    allVideos = allVideos.Where(v => v.IsBroken == isBroken.Value).ToList();
+                }
+
                 // Deduplicate videos by title (without extension)
                 // Group by normalized title and keep only the best one per title
                 var deduplicatedVideos = allVideos
@@ -1850,6 +1875,12 @@ namespace Optimarr.Controllers
                             return false;
                         }
                     }).ToList();
+                }
+
+                // Re-apply broken filter after in-memory transforms for correctness.
+                if (isBroken.HasValue)
+                {
+                    allVideos = allVideos.Where(v => v.IsBroken == isBroken.Value).ToList();
                 }
 
                 // Return just the IDs

@@ -141,3 +141,74 @@ Use `docs/reports/REPORT_TEMPLATE.md` and append dated sections below.
   - Static code search in `Controllers/`, `Program.cs`, and `Services/VideoAnalyzerService.cs`.
 - Result:
   - S8/S6 gate scope passes in current code state.
+
+## 2026-03-01 (RQ-R1: Re-Review of RQ-E1/RQ-E2/RQ-E3)
+
+### Agent Report - CODE REVIEW
+
+#### Scope
+- Task ID(s): `RQ-R1`
+- Request summary: Release-style code review for request-driven fixes `RQ-E1`, `RQ-E2`, `RQ-E3` covering regressions, edge cases, security/logging hygiene, and consistency with `docs/PROJECT_CONTEXT.md` / `docs/PLAN.md`.
+- Files in scope: `wwwroot/js/migration.js`, `Controllers/LibraryController.cs`, `Services/LibraryScannerService.cs`
+
+#### Findings
+##### BLOCKING
+- None.
+
+##### WARNING
+- `Services/LibraryScannerService.cs`: `IsPermissionRelatedException(...)` uses message substring heuristics (`"access"` + `"denied"`) in addition to type checks. This is workable but can produce false positives for localized/non-standard provider messages; consider evolving to type-first + known inner-exception chain checks.
+
+##### APPROVED
+- `RQ-E1` (`wwwroot/js/migration.js`): migration banner now shows only for active migration states (`checking/creating/migrating`) or error, and no longer resurfaces completed state on refresh.
+- `RQ-E2` (`Controllers/LibraryController.cs`): re-applying `isBroken` after in-memory recalculation/filtering keeps broken-only results strict in both paged browse and ID-only paths.
+- `RQ-E3` (`Services/LibraryScannerService.cs`): permission-related analysis failures are rethrown and handled by scan failure accounting, avoiding incorrect forced-broken media records.
+- Logging hygiene remains acceptable for this scope: exceptions are logged server-side with context, and no new API error-contract regressions were introduced by these changes.
+- Consistency check passed:
+  - aligns with `docs/PROJECT_CONTEXT.md` by preserving controller/service responsibility boundaries and existing API compatibility;
+  - does not conflict with active architectural direction documented in `docs/PLAN.md` (no contradictory structural change).
+
+#### Blocker Map (if any)
+- None for `RQ-R1` scope.
+
+#### QA Gate Recommendation
+- **GO** for QA on `RQ-E1/E2/E3` scope (no blockers).
+
+#### Artifacts
+- Updated task tracker: `docs/TASKS.md` (`RQ-R1` -> ✅ with summary)
+- Updated changelog: `docs/CHANGELOG.md` (Unreleased review-pass note)
+- Updated report: `docs/reports/REPORT_CODE_REVIEW_AGENT.md` (this section)
+
+## 2026-03-02 (RQ-E3 Security Fix Validation)
+
+### Agent Report - CODE REVIEW
+
+#### Scope
+- Task ID(s): `RQ-E3`, `RQ-R1` (status recommendation)
+- Request summary: Validate RQ-E3 security fix to ensure failed-file/status payloads are sanitized, diagnostic detail is retained server-side, and permission-edge behavior has no regression.
+- Files in scope: `Services/LibraryScannerService.cs`, `Controllers/LibraryController.cs`, `docs/TASKS.md`, `docs/CHANGELOG.md`
+
+#### Findings
+##### BLOCKING
+- None.
+
+##### WARNING
+- None.
+
+##### APPROVED
+- Failed-file write-path is sanitized:
+  - `LibraryScannerService` now stores `GetClientSafeFailedFileMessage(ex)` instead of raw exception text in failed-file records.
+- Failed-file read/status payload path is sanitized:
+  - `LibraryController` maps `FailedFilesList.ErrorMessage` via `GetClientSafeFailedFileMessage(errorType, rawMessage)` before returning scan status responses.
+- Server-side diagnostics remain intact:
+  - Exceptions are still logged with exception objects (for example, `_logger.LogError(ex, ...)`), preserving stack and diagnostic context in logs.
+- Permission-edge behavior remains correct:
+  - Permission-related analysis exceptions are still rethrown from analysis path and classified as failed scan items rather than forcing broken-media classification.
+
+#### Recommendation
+- Set `RQ-R1` to `✅` (completed) for this scope.
+- QA gate recommendation: **GO** for request-cycle scope from code-review perspective.
+
+#### Artifacts
+- Updated task tracker: `docs/TASKS.md`
+- Updated changelog: `docs/CHANGELOG.md`
+- Updated report: `docs/reports/REPORT_CODE_REVIEW_AGENT.md` (this section)

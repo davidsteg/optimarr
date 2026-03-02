@@ -18,6 +18,8 @@ When creating a new story, use this template:
 - **Developer:** Developer Name
 - **Version:** X.Y.Z
 - **Description:** Brief description of the story
+- **Request Link:** `docs/REQUESTS_TRACKER.md` (`BUG-*` or `FR-*`)
+- **Related Task IDs:** `RQ-*` (and `FP-*` where applicable)
 - **Database Changes:** Yes/No - Details
 - **Migration Script:** Path to migration script (if applicable)
 - **UI Changes:** List of UI changes
@@ -31,11 +33,59 @@ When creating a new story, use this template:
 
 ## Active Stories
 
-_No active stories at this time_
+### STORY-REQ-FEAT-001: Quality Regression Alerts + Playback-Aware Scoring + Scheduled Jobs
+- **Status:** 🟡 In Progress
+- **Priority:** High
+- **Started:** 2026-03-02
+- **Developer:** Unassigned (planning)
+- **Version:** Unreleased
+- **Description:** Planned feature set for quality regression alerts, playback-aware scoring, and scheduled refresh execution.
+- **Request Link:** `docs/REQUESTS_TRACKER.md` (`FR-20260302-01`)
+- **Related Task IDs:** `RQ-BA2`, `RQ-A1`, `RQ-DOC2`, `FP-BA1`, `FP-BA2`, `FP-A1`, `FP-A2`, `FP-A3`, `FP-A4`
+- **Documentation Updates:** `docs/PLAN.md`, `docs/TASKS.md`, `docs/STORY_TRACKING.md`
 
 ---
 
 ## Recent Stories
+
+### STORY-REQ-BUG-001: Migration banner repeats on refresh
+- **Status:** ✅ Completed
+- **Priority:** Medium
+- **Started:** 2026-03-01
+- **Completed:** 2026-03-01
+- **Developer:** AI Assistant (implementation + review + QA)
+- **Version:** Unreleased
+- **Description:** Migration-status banner now shows only for active migration/error states and no longer reappears after completed refresh.
+- **Request Link:** `docs/REQUESTS_TRACKER.md` (`BUG-20260301-01`)
+- **Related Task IDs:** `RQ-BA1`, `RQ-E1`, `RQ-R1`, `RQ-Q1`, `RQ-DOC1`
+- **Verification Status:** Implemented and security-reviewed; QA follow-up remains partial at `RQ-Q1`.
+- **Documentation Updates:** `docs/TASKS.md`, `docs/STORY_TRACKING.md`, `docs/CHANGELOG.md`
+
+### STORY-REQ-BUG-002: Broken-only filter includes non-broken media
+- **Status:** ✅ Completed
+- **Priority:** Medium
+- **Started:** 2026-03-01
+- **Completed:** 2026-03-01
+- **Developer:** AI Assistant (implementation + review + QA)
+- **Version:** Unreleased
+- **Description:** Broken-only filter logic was tightened so non-broken media is excluded consistently after in-memory processing.
+- **Request Link:** `docs/REQUESTS_TRACKER.md` (`BUG-20260301-02`)
+- **Related Task IDs:** `RQ-BA1`, `RQ-E2`, `RQ-R1`, `RQ-Q1`, `RQ-DOC1`
+- **Verification Status:** Implemented and security-reviewed; QA follow-up remains partial at `RQ-Q1`.
+- **Documentation Updates:** `docs/TASKS.md`, `docs/STORY_TRACKING.md`, `docs/CHANGELOG.md`
+
+### STORY-REQ-BUG-003: Permission-handling failure on restricted files
+- **Status:** ✅ Completed
+- **Priority:** High
+- **Started:** 2026-03-01
+- **Completed:** 2026-03-01
+- **Developer:** AI Assistant (implementation + review + QA)
+- **Version:** Unreleased
+- **Description:** Permission-restricted analysis paths now route to failed-scan handling and avoid forced broken-media classification.
+- **Request Link:** `docs/REQUESTS_TRACKER.md` (`BUG-20260301-03`)
+- **Related Task IDs:** `RQ-BA1`, `RQ-E3`, `RQ-R1`, `RQ-Q1`, `RQ-DOC1`
+- **Verification Status:** Implemented and security-reviewed; QA follow-up remains partial at `RQ-Q1`.
+- **Documentation Updates:** `docs/TASKS.md`, `docs/STORY_TRACKING.md`, `docs/CHANGELOG.md`
 
 ### STORY-006: Rating System Overhaul - Property-Based Rating (v1.2.0)
 - **Status:** ✅ Completed
@@ -449,12 +499,12 @@ _No active stories at this time_
 
 | Status | Count |
 |--------|-------|
-| ✅ Completed | 4 |
-| 🟡 In Progress | 0 |
+| ✅ Completed | 7 |
+| 🟡 In Progress | 1 |
 | 🔴 Blocked | 0 |
 | ⏸️ On Hold | 0 |
 
-**Total Stories:** 4
+**Total Stories:** 8
 
 ---
 

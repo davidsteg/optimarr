@@ -345,3 +345,101 @@ Use `docs/reports/REPORT_TEMPLATE.md` and append dated sections below.
 ## Verification
 - Checks run: policy/text consistency sweep across release-gate, Security section, and snapshot counters.
 - Result: release documentation is internally consistent with the stated owner policy decision.
+
+---
+
+## 2026-03-02
+
+### Agent Report - Security Agent (RQ Final Signoff Pass)
+
+## Scope
+- Task ID(s): `RQ-E1`, `RQ-E2`, `RQ-E3`
+- Request summary: Verify request-cycle bug fixes did not introduce new security regressions.
+- Files in scope: `wwwroot/js/migration.js`, `Controllers/LibraryController.cs`, `Services/LibraryScannerService.cs`
+
+## Actions Taken
+- Reviewed RQ-touched paths for security-sensitive behavior changes.
+- Focused on error handling and payload/logging surfaces.
+- Traced permission-related failures from scanner exceptions through persisted failed-file records to API responses.
+
+## Findings
+### BLOCKING
+- [MEDIUM] New information-disclosure regression in `RQ-E3` flow:
+  - `Services/LibraryScannerService.cs` persists raw exception text (`ex.Message`) into failed-file records during scan failure handling.
+  - `Controllers/LibraryController.cs` maps and returns `FailedFilesList.ErrorMessage` in scan status responses.
+  - Impact: permission/OS exception messages can be exposed to API consumers; this violates sanitized-client-payload posture for error details.
+
+### WARNING
+- None.
+
+### APPROVED
+- `RQ-E1` migration-banner state/polling adjustments do not introduce new client-side injection or auth exposure patterns in reviewed logic.
+- `RQ-E2` broken-filter correctness updates do not introduce new security-relevant data exposure/regression in reviewed query flow.
+- Existing owner-accepted `S1` exception remains unchanged and is not reopened in this pass.
+
+## Release Posture
+- Base release posture regarding `S1` exception is unchanged.
+- **RQ-cycle security signoff is blocked** until failed-file API error payloads are sanitized.
+
+## Exact Remediation
+- Keep full exception detail in server logs only.
+- Replace persisted/returned failed-file `ErrorMessage` payload with sanitized client-safe text (for example, "An internal error occurred. Check logs for details.").
+- Preserve error categorization (`ErrorType`) for UI grouping without exposing raw exception strings.
+
+## Artifacts
+- Files created/updated: `docs/TASKS.md`, `docs/CHANGELOG.md`, `docs/reports/REPORT_SECURITY_AGENT.md`
+- Report file: `docs/reports/REPORT_SECURITY_AGENT.md`
+- Changelog entry: `docs/CHANGELOG.md` (`Unreleased`)
+
+## Verification
+- Checks run: focused code review on `RQ-E1/E2/E3` touched paths and payload/logging flow tracing.
+- Result: explicit RQ-cycle security blockers identified (no change to accepted `S1` policy exception).
+
+---
+
+## 2026-03-02
+
+### Agent Report - Security Agent (RQ-E3 Conflict Resolution Pass)
+
+## Scope
+- Task ID(s): `RQ-E3`, `RQ-R1`, `RQ-Q1`
+- Request summary: Resolve task-state conflict between RQ signoff note and closed RQ rows; issue clear pass/fail.
+- Files in scope: `Services/LibraryScannerService.cs`, `Controllers/LibraryController.cs`, `docs/TASKS.md`
+
+## Actions Taken
+- Re-verified RQ-E3 flow for payload disclosure risk:
+  - scanner failure capture path (`failedFiles.Add(... ex.Message ...)`),
+  - failed-file API response mapping (`FailedFilesList.ErrorMessage = f.ErrorMessage`).
+- Confirmed conflict existed in task tracker (blocked signoff note vs. closed RQ rows).
+- Updated RQ task states to match current security evidence.
+
+## Findings
+### BLOCKING
+- [MEDIUM] RQ-E3 still exposes raw exception details via failed-file API payloads.
+  - Persistence source: `Services/LibraryScannerService.cs` stores `ex.Message`.
+  - Response surface: `Controllers/LibraryController.cs` returns `FailedFilesList.ErrorMessage`.
+
+### APPROVED
+- RQ-E1 and RQ-E2 remain security-stable in reviewed scope.
+- Existing owner-accepted `S1` exception posture remains unchanged.
+
+## Gate Decision
+- **RQ SECURITY GATE DECISION: FAIL**
+
+## State Reconciliation Applied
+- `RQ-E3` -> `⚠️` (partial; remediation pending)
+- `RQ-R1` -> `⚠️` (partial; follow-up review pending)
+- `RQ-Q1` -> `⚠️` (partial; add/re-run payload-sanitization regression coverage)
+
+## Exact Remediation
+- Sanitize failed-file `ErrorMessage` payloads before persistence/response (generic client-safe text).
+- Keep detailed exception text in logs only.
+- Re-run RQ review + QA after patch, then restore `RQ-E3/RQ-R1/RQ-Q1` to `✅`.
+
+## Artifacts
+- Files created/updated: `docs/TASKS.md`, `docs/CHANGELOG.md`, `docs/reports/REPORT_SECURITY_AGENT.md`
+- Report file: `docs/reports/REPORT_SECURITY_AGENT.md`
+
+## Verification
+- Checks run: focused code-path review + tracker consistency reconciliation.
+- Result: conflict resolved in tracker; RQ gate status is now explicit and consistent with evidence.

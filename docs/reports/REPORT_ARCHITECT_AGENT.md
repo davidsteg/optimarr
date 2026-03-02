@@ -50,3 +50,46 @@ Use `docs/reports/REPORT_TEMPLATE.md` and append dated sections below.
 ## Verification
 - Checks run: targeted code audit and docs/task cross-reference for S6/S8/version paths.
 - Result: Release-gate implementation blueprint is complete and handoff-ready; code execution remains pending in downstream agents.
+
+---
+
+## 2026-03-01
+
+### Agent Report - Architect Agent
+
+## Scope
+- Task ID(s): RQ-A1
+- Request summary: Produce architecture/design mapping for first concrete feature request from `docs/REQUESTS_TRACKER.md` (`FR-20260302-01`).
+- Files in scope: `docs/REQUESTS_TRACKER.md`, `docs/PLAN.md`, `docs/TASKS.md`, `docs/CHANGELOG.md`, `docs/reports/REPORT_ARCHITECT_AGENT.md`
+
+## Actions Taken
+- Reviewed the concrete FR intake row and extracted architecture requirements for alerts, playback-aware scoring, and scheduled refresh jobs.
+- Added a dedicated `RQ-A1` section in `docs/PLAN.md` with option analysis, selected design, touchpoints, risks/mitigations, acceptance criteria, and execution/QA/security handoff checklist.
+- Updated `docs/TASKS.md` to mark `RQ-A1` complete and added dependency notes tying `FP-E*` and `FP-Q*` work to `RQ-A1`.
+- Updated `docs/CHANGELOG.md` (`Unreleased`) with traceable `RQ-A1` completion notes.
+
+## Findings
+### BLOCKING
+- None at design stage; implementation depends on downstream execution of `FP-E*` and validation of `FP-Q*` tasks.
+
+### WARNING
+- The selected in-process scheduler approach requires strict non-overlap/cancellation handling to avoid duplicate refresh cycles.
+- Playback-aware scoring requires sparse-history fallback guardrails to prevent unstable rating outputs.
+
+### APPROVED
+- Option A (in-process hosted scheduler + persisted alert lifecycle + optional playback-aware weighting) is the best fit for current stack and release scope.
+- API/model/config touchpoints are sufficiently concrete for unambiguous execution handoff.
+
+## Artifacts
+- Files created/updated: `docs/PLAN.md`, `docs/TASKS.md`, `docs/CHANGELOG.md`, `docs/reports/REPORT_ARCHITECT_AGENT.md`
+- Report file: `docs/reports/REPORT_ARCHITECT_AGENT.md`
+- Changelog entry: Added under `[Unreleased]` in `docs/CHANGELOG.md`
+
+## Open Issues / Next Steps
+- Execution Agent to implement `FP-E1..FP-E6` according to `RQ-A1` design mapping.
+- QA Agent to execute `FP-Q1..FP-Q4` using the explicit dependency note and acceptance criteria in `docs/PLAN.md`.
+- Security Agent to validate endpoint auth coverage and privacy-safe logging for new alert/scheduler surfaces.
+
+## Verification
+- Checks run: request-row readback, task dependency alignment, and plan artifact consistency review.
+- Result: `RQ-A1` design mapping is complete and execution-ready without ambiguity.

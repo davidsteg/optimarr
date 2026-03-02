@@ -18,7 +18,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 LABEL org.opencontainers.image.title="Optimarr"
 LABEL org.opencontainers.image.description="A web-based application for analyzing video files to determine their compatibility with media server clients"
 LABEL org.opencontainers.image.vendor="Optimarr"
-LABEL org.opencontainers.image.version="1.2.1"
+LABEL org.opencontainers.image.version="1.2.2"
 LABEL org.opencontainers.image.url="https://github.com/bridgemill-ch/optimarr"
 LABEL org.opencontainers.image.documentation="https://github.com/bridgemill-ch/optimarr/blob/main/README.md"
 LABEL org.opencontainers.image.source="https://github.com/bridgemill-ch/optimarr"

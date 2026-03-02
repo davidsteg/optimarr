@@ -208,3 +208,68 @@ Use `docs/reports/REPORT_TEMPLATE.md` and append dated sections below.
   - manual comparison of report statuses against task rows and narrative notes
 - Result:
   - task list wording now reflects report-backed progress without changing snapshot totals.
+
+## 2026-03-01 (requests/story todo sync)
+
+### Agent Report - BA
+
+#### Scope
+- Task ID(s): request/story backlog synchronization
+- Request summary: Update todo list using open items from requests tracker and story tracking context.
+- Files in scope: `docs/REQUESTS_TRACKER.md`, `docs/STORY_TRACKING.md`, `docs/TASKS.md`, `docs/CHANGELOG.md`
+
+#### Actions Taken
+- Cross-checked open request rows against current task backlog.
+- Added a dedicated `REQUEST/STORY SYNC BACKLOG` block in `docs/TASKS.md` with `RQ-*` items for BA/Execution/Review/QA/Docs lanes.
+- Marked this new block as excluded from current snapshot totals to avoid accidental counter drift.
+- Logged the synchronization pass in `docs/CHANGELOG.md`.
+
+#### Findings
+##### APPROVED
+- Open request items are now represented in the primary todo queue with clear ownership and next steps.
+
+#### Artifacts
+- Files updated:
+  - `docs/TASKS.md`
+  - `docs/CHANGELOG.md`
+  - `docs/reports/REPORT_BA_AGENT.md`
+
+#### Verification
+- Checks run:
+  - manual mapping verification of `BUG-20260301-01..03` to `RQ-*` tasks
+- Result:
+  - todo list now reflects request and story-driven follow-up work.
+
+## 2026-03-02 (RQ-BA1/RQ-BA2 intake alignment)
+
+### Agent Report - BA
+
+#### Scope
+- Task ID(s): `RQ-BA1`, `RQ-BA2`
+- Request summary: Complete request/story intake alignment so requests tracker, story tracking, and BA tasks are cross-linked and consistent.
+- Files in scope: `docs/REQUESTS_TRACKER.md`, `docs/STORY_TRACKING.md`, `docs/TASKS.md`, `docs/CHANGELOG.md`
+
+#### Actions Taken
+- Replaced the placeholder feature-request row with concrete intake `FR-20260302-01` and owner-ready status wording in `docs/REQUESTS_TRACKER.md`.
+- Populated `docs/STORY_TRACKING.md` Active Stories with `BUG-20260301-01`, `BUG-20260301-02`, and `BUG-20260301-03`.
+- Added task traceability links in each active bug entry to `docs/TASKS.md` IDs (`RQ-E1`, `RQ-E2`, `RQ-E3`, and `RQ-BA1`).
+- Marked `RQ-BA1` and `RQ-BA2` as completed in `docs/TASKS.md` with concise evidence text.
+- Logged this intake-alignment pass in `docs/CHANGELOG.md` under `[Unreleased]`.
+
+#### Findings
+##### APPROVED
+- Request intake row, active bug stories, and BA task statuses are now synchronized and cross-linked.
+
+#### Artifacts
+- Files updated:
+  - `docs/REQUESTS_TRACKER.md`
+  - `docs/STORY_TRACKING.md`
+  - `docs/TASKS.md`
+  - `docs/CHANGELOG.md`
+  - `docs/reports/REPORT_BA_AGENT.md`
+
+#### Verification
+- Checks run:
+  - manual cross-link validation between request IDs, active story IDs, and `RQ-*` task IDs
+- Result:
+  - `RQ-BA1` and `RQ-BA2` intake alignment criteria are met.

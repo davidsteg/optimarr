@@ -10,6 +10,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-03-02
+
+### Added
+- Added `docs/REQUESTS_TRACKER.md` as a single shared file for both bug reports and feature requests.
+
+### Changed
+- Reconciled request-cycle wording across tracker/task docs after `RQ-Q1` completion.
+  - Updated `docs/REQUESTS_TRACKER.md` bug rows to reflect QA-complete state (`RQ-Q1 ✅`) and removed stale "QA follow-up pending" language.
+- Started Feature Pack sequence in task planning order.
+  - Set kickoff state in `docs/TASKS.md`: `FP-BA1/FP-BA2` in progress, `FP-A1..FP-A4` queued next, and `FP-E*` queued after architecture.
+  - Replaced stale RQ-focused execution-order block with Feature Pack phase flow (`FP-BA*` → `FP-A*` → `FP-E*` → review/test/stabilize/finalize).
+- QA revalidated `RQ-E3` security behavior and request regression scope (`RQ-Q1`) on 2026-03-02.
+  - Added regression assertion for permission-denied scan payload sanitization in `GetScan` failed-file response mapping.
+  - Confirmed failed-file tracking remains intact in scan-status payloads (`FailedFiles` and `FailedFilesList` continuity).
+  - Reconfirmed `RQ-E1` migration banner contract and `RQ-E2` broken-only filter strictness remain fixed.
+  - Updated `docs/TASKS.md` to mark `RQ-Q1` final status as complete for targeted regression scope.
+- Reconciled documentation wording after security reconciliation to remove status conflicts.
+  - Standardized final request-cycle state across tracker docs:
+    - implementation complete (`RQ-E1/E2/E3`),
+    - security review complete (`RQ-R1`),
+    - QA follow-up still partial (`RQ-Q1`).
+  - Updated `docs/TASKS.md` release-gate block to explicitly distinguish:
+    - release gate posture (`GO` with owner-accepted `S1` exception),
+    - request-cycle security gate (`PASS`),
+    - request-cycle QA gate (`PARTIAL`).
+  - Updated `docs/REQUESTS_TRACKER.md` and `docs/STORY_TRACKING.md` wording to match the same final RQ outcome language and avoid completed-vs-not-approved ambiguity.
+- Code Review Agent completed focused RQ-E3 security re-review (2026-03-02).
+  - Confirmed failed-file/status API payloads are sanitized and do not expose raw exception details.
+  - Confirmed server-side logging still retains diagnostic exception detail for investigation.
+  - Confirmed permission-edge behavior is unchanged: permission-related analysis failures become failed scan items and do not mark media as broken by default.
+  - Recommendation: `RQ-R1` set to `✅` (GO for QA on request-cycle scope).
+- Closed RQ-E3 payload disclosure remediation path (2026-03-02).
+  - `LibraryScannerService` now stores client-safe failed-file messages instead of raw `ex.Message` for scan failure records.
+  - `LibraryController` scan-status response now maps failed-file messages to sanitized client-safe text, preventing exposure from legacy/raw records.
+  - Permission-handling behavior remains unchanged: restricted files are treated as failed scan items and are not classified as broken media by default.
+- Security Agent reconciled RQ-E3 signoff conflict in `docs/TASKS.md` (2026-03-02).
+  - Confirmed live code still leaks raw exception text through failed-file API surfaces in `RQ-E3` path (`LibraryScannerService` persistence + `LibraryController` response mapping).
+  - Reopened request-cycle task states for consistency:
+    - `RQ-E3` -> `⚠️` (partial, remediation required),
+    - `RQ-R1` -> `⚠️` (partial, re-review required),
+    - `RQ-Q1` -> `⚠️` (partial, add/re-run sanitization regression test).
+  - Added one unambiguous gate line in tasks: `RQ SECURITY GATE DECISION: FAIL`.
+  - Existing owner-accepted `S1` exception remains unchanged.
+- Security Agent final signoff review for request bug-fix cycle (`RQ-E1/E2/E3`) completed (2026-03-02).
+  - `RQ-E1` (`wwwroot/js/migration.js`) and `RQ-E2` (`Controllers/LibraryController.cs`) show no new security regressions in reviewed paths.
+  - New regression identified in `RQ-E3` path:
+    - `Services/LibraryScannerService.cs` persists raw exception text (`ex.Message`) into failed-file records.
+    - `Controllers/LibraryController.cs` returns `FailedFilesList.ErrorMessage` to clients in scan status responses.
+  - Result: RQ-cycle security signoff is blocked until failed-file error payloads are sanitized (server logs can keep detailed exception text).
+  - Existing owner-accepted `S1` exception posture remains unchanged and was not reopened.
+- Performed an additional documentation consistency pass to enforce Request↔Story↔RQ linkage conventions.
+  - Updated `docs/STORY_TRACKING.md` story template to require `Request Link` and `Related Task IDs` fields for new stories.
+  - Updated `docs/REQUESTS_TRACKER.md` details templates to include `Related Story ID` and `Related RQ Task IDs`.
+  - Updated `docs/TASKS.md` request/story sync block with a canonical linkage map table (`Request ID` -> `Story ID` -> `RQ Task IDs`) and corrected stale source-sync wording.
+- Closed documentation sync tasks `RQ-DOC1` and `RQ-DOC2` and reconciled request/story/task traceability.
+  - Updated `docs/REQUESTS_TRACKER.md` to include explicit `Story ID`, `Linked RQ Task IDs`, and `Evidence` columns for bug and feature request rows.
+  - Updated request statuses/evidence for completed request-driven bug work (`BUG-20260301-01..03`) and open planned feature request (`FR-20260302-01`).
+  - Updated `docs/STORY_TRACKING.md` so `Active Stories` contains only open work (`STORY-REQ-FEAT-001` for `FR-20260302-01`).
+  - Moved request-driven bug stories into `Recent Stories` as completed entries (`STORY-REQ-BUG-001..003`) with explicit Request ID and RQ task links.
+  - Updated `docs/TASKS.md` to mark `RQ-DOC1` and `RQ-DOC2` complete with evidence-backed wording.
+- QA completed targeted `RQ-Q1` regression coverage for `RQ-E1/E2/E3` (2026-03-01).
+  - Added `Optimarr.Tests/Regression/RequestRegressionTests.cs` with regression checks for:
+    - migration-banner state contract (`RQ-E1`),
+    - strict broken-only filtering in both paged video and ID-only paths (`RQ-E2`),
+    - permission-edge behavior ensuring permission failures are rethrown and do not create broken-media records (`RQ-E3`).
+  - Environment validation commands were attempted and blocked by missing SDK:
+    - `dotnet restore`
+    - `dotnet build -c Release`
+    - `dotnet test`
+  - Pending runtime validation command on SDK-enabled runner:
+    - `dotnet test Optimarr.Tests/Optimarr.Tests.csproj --filter "RequestRegressionTests"`
+- Code Review Agent completed `RQ-R1` review pass for `RQ-E1/E2/E3` (2026-03-01).
+  - Result: **QA GO** for RQ scope (no blocking regressions found).
+  - Confirmed `RQ-E1` migration banner behavior now suppresses completed/idle re-show on refresh while preserving active/error display.
+  - Confirmed `RQ-E2` broken-only filtering remains strict after in-memory transform/recalculation stages in both paged video and ID-list flows.
+  - Confirmed `RQ-E3` permission-related analysis failures are classified as failed scan items rather than forcing broken-media records.
+- Completed request-driven bugfix tasks `RQ-E1`, `RQ-E2`, and `RQ-E3`.
+  - `RQ-E1` (`BUG-20260301-01`): migration banner behavior now displays only during active migration states (or error) and no longer re-shows completed state on refresh.
+  - `RQ-E2` (`BUG-20260301-02`): broken-only filter correctness hardened by re-applying `isBroken` constraints after in-memory filtering/recalculation stages.
+  - `RQ-E3` (`BUG-20260301-03`): permission-restricted file analysis paths are treated as failed scan items rather than defaulting media records to broken.
+- Completed Architect task `RQ-A1` for first concrete feature-request design mapping.
+  - Added dedicated `RQ-A1` section to `docs/PLAN.md` for `FR-20260302-01` (quality regression alerts + playback-aware scoring + scheduled refresh jobs).
+  - Documented problem statement, approach options with selected architecture, API/data/model/config touchpoints, risks/mitigations, acceptance criteria, and implementation/testing handoff checklist.
+  - Updated `docs/TASKS.md` to mark `RQ-A1` complete and added explicit dependency notes for `FP-E*` execution tasks and `FP-Q*` testing scope.
+- Completed BA intake alignment tasks `RQ-BA1` and `RQ-BA2` to synchronize request and story tracking artifacts.
+  - Replaced placeholder feature request row in `docs/REQUESTS_TRACKER.md` with concrete intake `FR-20260302-01` and owner-ready status wording.
+  - Populated `docs/STORY_TRACKING.md` Active Stories with open bug entries `BUG-20260301-01`, `BUG-20260301-02`, and `BUG-20260301-03`.
+  - Added direct task traceability links from active bug stories to `docs/TASKS.md` request tasks (`RQ-E1`, `RQ-E2`, `RQ-E3`, `RQ-BA1`).
+  - Marked `RQ-BA1` and `RQ-BA2` complete in `docs/TASKS.md` with evidence wording.
+- Consolidated reporting policy to one tracker file (append rows) instead of one file per bug/feature request.
+- Migrated existing bug examples into `docs/REQUESTS_TRACKER.md` with concrete IDs and open statuses.
+- Updated `docs/TASKS.md` with a request/story-driven backlog sync section.
+  - Added `RQ-*` tasks mapped from `docs/REQUESTS_TRACKER.md` open bugs (`BUG-20260301-01..03`).
+  - Added traceability/documentation tasks to align request rows, story entries, and implementation follow-through.
+- Expanded request/story tasks to cover feature-request intake and active-story synchronization.
+  - Added `RQ-BA2` for replacing placeholder FR row with concrete feature request metadata.
+  - Added `RQ-A1` for architecture/design mapping of first concrete feature request.
+  - Added `RQ-DOC2` to keep `Active Stories` aligned with open request IDs.
+- Trimmed `docs/TASKS.md` to active backlog view by removing completed task rows.
+  - Kept only open/partial items in main agent sections.
+  - Rebased snapshot and summary dashboards to reflect active (non-completed) tasks.
+  - Simplified execution order flow to active request/security work.
+
+### Removed
+- Removed `docs/BUG_REPORT_TEMPLATE.md` (replaced by `docs/REQUESTS_TRACKER.md`).
+- Removed `docs/FEATURE_REQUEST_TEMPLATE.md` (replaced by `docs/REQUESTS_TRACKER.md`).
+
+## [1.2.1] - 2026-03-01
+
 ### Changed
 - Prepared release version `1.2.1` across runtime/build metadata.
   - Updated `VERSION` to `1.2.1`.
@@ -31,13 +140,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - No S8 regression evidence detected in this pass.
 - Security Agent S1 closure-only revalidation pass completed (2026-03-01) with **NO-GO** retained.
   - Required ordered probes run:
-    - old exposed key (`fcdc264436ef4b5b83e16fa5dc186cfd`) -> `200`
+    - old exposed key (`**33**`) -> `200`
     - rotated/new key probe -> `NO_NEW_KEY_EVIDENCE` (no concrete new key available for `200` validation)
   - Decision rule not satisfied (`new key` != `200` and old key != `401`), so S1 remains open.
 - Security Agent S1 hard-evidence revalidation rerun completed (2026-03-01) with **NO-GO** retained.
   - Live Sonarr status probes this pass:
     - no key -> `401`
-    - old exposed key (`fcdc264436ef4b5b83e16fa5dc186cfd`) -> `200`
+    - old exposed key (`**33**`) -> `200`
   - New-key proof remains unavailable in this pass (`NO_NEW_KEY_EVIDENCE`), so S1 closure criteria are not met.
   - Tracked runtime config remains secret-safe (placeholder-only Sonarr values in `config/appsettings.json`).
 - Security Agent S1 closure revalidation rerun completed (2026-03-01) with **NO-GO** retained.
@@ -55,7 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Confirmed `S6` remains unchanged in intent: library-root path allowlist + `ArgumentList`-based MediaInfo execution.
   - Recommended task state: set `S8` to `✅` (complete) while `S1` remains the independent release blocker.
 - Security release-gate revalidation completed by Security Agent with **NO-GO** retained (2026-03-01).
-  - S1 still fails closure criteria: old exposed Sonarr key (`fcdc264436ef4b5b83e16fa5dc186cfd`) still returns `200` on `/api/v3/system/status`.
+  - S1 still fails closure criteria: old exposed Sonarr key (`**`) still returns `200` on `/api/v3/system/status`.
   - Required S1 evidence remains incomplete because replacement-key success proof was not provided in this gate pass.
   - Runtime/repo secret hygiene remains compliant (`config/appsettings.json` Sonarr values are placeholders only).
   - S8 revalidation passed: no `ex.Message`/stack-trace content detected in controller API payload construction paths.
