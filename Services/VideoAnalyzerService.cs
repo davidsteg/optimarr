@@ -20,6 +20,7 @@ namespace Optimarr.Services
         private readonly IConfiguration? _configuration;
         private readonly AppDbContext? _dbContext;
         private readonly MediaPropertyRatingService? _mediaPropertyRatingService;
+        private static readonly HttpClient DebugHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
 
         public VideoAnalyzerService(
             IConfiguration? configuration = null,
@@ -159,6 +160,13 @@ namespace Optimarr.Services
             }
 
             var fileInfo = new FileInfo(filePath);
+            #region agent log
+            WriteDebugLog("H1", "Services/VideoAnalyzerService.cs:ExtractVideoInfo:start", "Starting media extraction", new
+            {
+                filePath,
+                fileSize = fileInfo.Length
+            });
+            #endregion
             if (fileInfo.Length == 0)
             {
                 var error = $"File is empty (0 bytes): {filePath}";
@@ -207,6 +215,7 @@ namespace Optimarr.Services
                     CreateNoWindow = true
                 };
                 processStartInfo.ArgumentList.Add("--Output=XML");
+                // Keep original filesystem path bytes for primary invocation.
                 processStartInfo.ArgumentList.Add(filePath);
                 
                 string xmlOutput;
@@ -295,6 +304,14 @@ namespace Optimarr.Services
                     _logger?.LogError(ex, ">>> Failed to parse mediainfo XML output");
                     _logger?.LogError(">>> XML content (first 1000 chars): {Xml}", 
                         xmlOutput.Length > 1000 ? xmlOutput.Substring(0, 1000) : xmlOutput);
+
+                    // Fallback strategy for malformed/partial XML: use JSON output on normalized path.
+                    if (TryPopulateVideoInfoFromMediaInfoJsonWithPathVariants(videoInfo, filePath, cancellationToken))
+                    {
+                        _logger?.LogInformation("Recovered media metadata via mediainfo JSON fallback after XML parse failure: {FilePath}", filePath);
+                        return videoInfo;
+                    }
+
                     throw new InvalidOperationException($"Failed to parse mediainfo XML output: {ex.Message}", ex);
                 }
                 
@@ -330,29 +347,9 @@ namespace Optimarr.Services
                 
                 _logger?.LogDebug(">>> Using XML namespace: {Namespace}", ns.NamespaceName);
                 
-                // mediainfo CLI XML structure: <MediaInfo xmlns="..."><media>...</media></MediaInfo>
-                XElement? mediaElement2 = null;
-                
-                if (rootElement.Name.LocalName == "MediaInfo")
-                {
-                    // Structure: <MediaInfo><media>...</media></MediaInfo>
-                    // Try with namespace first, then without
-                    mediaElement2 = rootElement.Element(ns + "media") 
-                        ?? rootElement.Element("media")
-                        ?? rootElement.Descendants(ns + "media").FirstOrDefault()
-                        ?? rootElement.Descendants("media").FirstOrDefault();
-                }
-                else if (rootElement.Name.LocalName == "media")
-                {
-                    // Structure: <media>...</media> (direct)
-                    mediaElement2 = rootElement;
-                }
-                else
-                {
-                    // Try to find media element anywhere (with and without namespace)
-                    mediaElement2 = rootElement.Descendants(ns + "media").FirstOrDefault()
-                        ?? rootElement.Descendants("media").FirstOrDefault();
-                }
+                // mediainfo CLI XML structure: <MediaInfo><media>...</media></MediaInfo>
+                // Some payloads include many empty <media/> nodes; pick the most useful one.
+                XElement? mediaElement2 = SelectBestMediaElement(rootElement, ns);
                 
                 if (mediaElement2 == null)
                 {
@@ -362,15 +359,45 @@ namespace Optimarr.Services
                         string.Join(", ", rootElement.Elements().Select(e => e.Name.LocalName)));
                     _logger?.LogError(">>> XML content (first 1000 chars): {Xml}", 
                         xmlOutput.Length > 1000 ? xmlOutput.Substring(0, 1000) : xmlOutput);
+
+                    // Retry extraction with alternate mediainfo mode + normalized path before failing.
+                    if (TryPopulateVideoInfoFromMediaInfoJsonWithPathVariants(videoInfo, filePath, cancellationToken))
+                    {
+                        _logger?.LogInformation("Recovered media metadata via mediainfo JSON fallback after XML missing-media response: {FilePath}", filePath);
+                        return videoInfo;
+                    }
+
                     throw new InvalidOperationException($"Invalid mediainfo XML: missing media element. Root is: {rootElement.Name.LocalName}");
                 }
                 
                 _logger?.LogDebug(">>> Found media element with {Count} track elements", 
                     mediaElement2.Elements(ns + "track").Count() + mediaElement2.Elements("track").Count());
                 
-                // Get General track (container info) - handle namespace
-                var generalTrack = mediaElement2.Elements(ns + "track").FirstOrDefault(t => t.Attribute("type")?.Value == "General")
-                    ?? mediaElement2.Elements("track").FirstOrDefault(t => t.Attribute("type")?.Value == "General");
+                // Get General track (container info)
+                var allTracks = mediaElement2
+                    .Descendants()
+                    .Where(e => string.Equals(e.Name.LocalName, "track", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                #region agent log
+                WriteDebugLog("H1", "Services/VideoAnalyzerService.cs:ExtractVideoInfo:tracks", "Parsed XML track summary", new
+                {
+                    filePath,
+                    trackCount = allTracks.Count,
+                    hasGeneral = allTracks.Any(t => string.Equals(t.Attribute("type")?.Value, "General", StringComparison.OrdinalIgnoreCase)),
+                    hasVideo = allTracks.Any(t => string.Equals(t.Attribute("type")?.Value, "Video", StringComparison.OrdinalIgnoreCase))
+                });
+                #endregion
+                if (allTracks.Count == 0)
+                {
+                    // XML payload exists but selected media has no tracks; retry with JSON fallback.
+                    if (TryPopulateVideoInfoFromMediaInfoJsonWithPathVariants(videoInfo, filePath, cancellationToken))
+                    {
+                        _logger?.LogInformation("Recovered media metadata via mediainfo JSON fallback after XML empty-track payload: {FilePath}", filePath);
+                        return videoInfo;
+                    }
+                }
+                var generalTrack = allTracks.FirstOrDefault(t =>
+                    string.Equals(t.Attribute("type")?.Value, "General", StringComparison.OrdinalIgnoreCase));
                 
                 if (generalTrack != null)
                 {
@@ -379,17 +406,7 @@ namespace Optimarr.Services
                     videoInfo.Container = !string.IsNullOrEmpty(containerFormat) ? containerFormat.ToUpperInvariant() : string.Empty;
                     if (string.IsNullOrEmpty(videoInfo.Container))
                     {
-                        var ext = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant();
-                        videoInfo.Container = ext switch
-                        {
-                            "MP4" or "M4V" or "MOV" => "MP4",
-                            "MKV" or "MKA" => "MKV",
-                            "WEBM" => "WebM",
-                            "TS" or "M2TS" => "TS",
-                            "OGG" or "OGV" => "OGG",
-                            "AVI" => "AVI",
-                            _ => ext
-                        };
+                        videoInfo.Container = GuessContainerFromExtension(filePath);
                     }
                     
                     // Duration - try to get from Duration_String3 (formatted) first as it's more reliable,
@@ -528,8 +545,8 @@ namespace Optimarr.Services
                     // If duration is still 0, try to get it from video track as fallback
                     if (videoInfo.Duration <= 0)
                     {
-                        var videoTracksForDuration = mediaElement2.Elements(ns + "track").Where(t => t.Attribute("type")?.Value == "Video")
-                            .Concat(mediaElement2.Elements("track").Where(t => t.Attribute("type")?.Value == "Video"))
+                        var videoTracksForDuration = allTracks
+                            .Where(t => string.Equals(t.Attribute("type")?.Value, "Video", StringComparison.OrdinalIgnoreCase))
                             .ToList();
                         if (videoTracksForDuration.Count > 0)
                         {
@@ -658,7 +675,28 @@ namespace Optimarr.Services
                     
                     if (videoInfo.Duration <= 0)
                     {
-                        _logger?.LogWarning("Could not extract duration from mediainfo XML for: {FilePath}", filePath);
+                        #region agent log
+                        WriteDebugLog("H2", "Services/VideoAnalyzerService.cs:ExtractVideoInfo:beforeInform", "Duration still non-positive after XML parsing", new
+                        {
+                            filePath,
+                            duration = videoInfo.Duration,
+                            container = videoInfo.Container,
+                            codec = videoInfo.VideoCodec,
+                            width = videoInfo.Width,
+                            height = videoInfo.Height
+                        });
+                        #endregion
+                        var informDuration = TryGetDurationFromMediaInfoInform(filePath, cancellationToken);
+                        if (informDuration > 0)
+                        {
+                            videoInfo.Duration = informDuration;
+                            _logger?.LogDebug("Duration recovered from mediainfo --Inform for {FilePath}: {Duration}s",
+                                filePath, videoInfo.Duration);
+                        }
+                        else
+                        {
+                            _logger?.LogWarning("Could not extract duration from mediainfo XML or --Inform for: {FilePath}", filePath);
+                        }
                     }
                     
                     // Check for fast start optimization (MP4 only)
@@ -669,8 +707,8 @@ namespace Optimarr.Services
                 }
                 
                 // Get Video tracks - handle namespace
-                var videoTracks = mediaElement2.Elements(ns + "track").Where(t => t.Attribute("type")?.Value == "Video")
-                    .Concat(mediaElement2.Elements("track").Where(t => t.Attribute("type")?.Value == "Video"))
+                var videoTracks = allTracks
+                    .Where(t => string.Equals(t.Attribute("type")?.Value, "Video", StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 if (videoTracks.Count > 0)
                 {
@@ -690,11 +728,10 @@ namespace Optimarr.Services
                     }
                     
                     var widthStr = GetElementValue(videoTrack, "Width", ns);
-                    if (int.TryParse(widthStr, out var width))
-                        videoInfo.Width = width;
-                    
                     var heightStr = GetElementValue(videoTrack, "Height", ns);
-                    if (int.TryParse(heightStr, out var height))
+                    if (TryParseMediaInfoInt(widthStr, out var width))
+                        videoInfo.Width = width;
+                    if (TryParseMediaInfoInt(heightStr, out var height))
                         videoInfo.Height = height;
                     
                     var frameRateStr = GetElementValue(videoTrack, "FrameRate", ns);
@@ -740,8 +777,8 @@ namespace Optimarr.Services
                 }
                 
                 // Get Audio tracks - handle namespace
-                var audioTracks = mediaElement2.Elements(ns + "track").Where(t => t.Attribute("type")?.Value == "Audio")
-                    .Concat(mediaElement2.Elements("track").Where(t => t.Attribute("type")?.Value == "Audio"))
+                var audioTracks = allTracks
+                    .Where(t => string.Equals(t.Attribute("type")?.Value, "Audio", StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 foreach (var audioTrackXml in audioTracks)
                 {
@@ -768,8 +805,8 @@ namespace Optimarr.Services
                 }
                 
                 // Get Text (subtitle) tracks - handle namespace
-                var textTracks = mediaElement2.Elements(ns + "track").Where(t => t.Attribute("type")?.Value == "Text")
-                    .Concat(mediaElement2.Elements("track").Where(t => t.Attribute("type")?.Value == "Text"))
+                var textTracks = allTracks
+                    .Where(t => string.Equals(t.Attribute("type")?.Value, "Text", StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 foreach (var textTrackXml in textTracks)
                 {
@@ -785,6 +822,12 @@ namespace Optimarr.Services
                     videoInfo.SubtitleTracks.Add(subtitleTrack);
                 }
                 
+                // Ensure we always have a container fallback even if General track was missing/partial.
+                if (string.IsNullOrWhiteSpace(videoInfo.Container))
+                {
+                    videoInfo.Container = GuessContainerFromExtension(filePath);
+                }
+
                 // Check for fast start optimization (MP4 only)
                 if (videoInfo.Container == "MP4" || videoInfo.Container == "M4V" || videoInfo.Container == "MOV")
                 {
@@ -928,6 +971,497 @@ namespace Optimarr.Services
                 child = element.Element(name);
             }
             return child?.Value ?? string.Empty;
+        }
+
+        private static string NormalizeMediaInfoPath(string filePath)
+        {
+            var fullPath = Path.GetFullPath(filePath);
+            return fullPath.Normalize(NormalizationForm.FormC);
+        }
+
+        private bool TryPopulateVideoInfoFromMediaInfoJsonWithPathVariants(VideoInfo videoInfo, string originalPath, CancellationToken cancellationToken)
+        {
+            var tried = new HashSet<string>(StringComparer.Ordinal);
+            var candidates = new List<string>
+            {
+                originalPath
+            };
+
+            var normalizedFormC = NormalizeMediaInfoPath(originalPath);
+            if (!string.Equals(normalizedFormC, originalPath, StringComparison.Ordinal))
+            {
+                candidates.Add(normalizedFormC);
+            }
+
+            var normalizedFormD = normalizedFormC.Normalize(NormalizationForm.FormD);
+            if (!string.Equals(normalizedFormD, originalPath, StringComparison.Ordinal) &&
+                !string.Equals(normalizedFormD, normalizedFormC, StringComparison.Ordinal))
+            {
+                candidates.Add(normalizedFormD);
+            }
+
+            foreach (var candidate in candidates)
+            {
+                if (!tried.Add(candidate))
+                {
+                    continue;
+                }
+
+                #region agent log
+                WriteDebugLog("H3", "Services/VideoAnalyzerService.cs:TryPopulateVideoInfoFromMediaInfoJsonWithPathVariants:attempt", "Trying JSON fallback candidate path", new
+                {
+                    originalPath,
+                    candidate
+                });
+                #endregion
+                if (TryPopulateVideoInfoFromMediaInfoJson(videoInfo, candidate, cancellationToken))
+                {
+                    #region agent log
+                    WriteDebugLog("H3", "Services/VideoAnalyzerService.cs:TryPopulateVideoInfoFromMediaInfoJsonWithPathVariants:success", "JSON fallback candidate succeeded", new
+                    {
+                        candidate,
+                        duration = videoInfo.Duration,
+                        container = videoInfo.Container,
+                        codec = videoInfo.VideoCodec
+                    });
+                    #endregion
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool TryPopulateVideoInfoFromMediaInfoJson(VideoInfo videoInfo, string normalizedPath, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var processStartInfo = new ProcessStartInfo
+                {
+                    FileName = "mediainfo",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                processStartInfo.ArgumentList.Add("--Output=JSON");
+                processStartInfo.ArgumentList.Add(normalizedPath);
+
+                string jsonOutput;
+                using (var process = Process.Start(processStartInfo))
+                {
+                    if (process == null)
+                    {
+                        return false;
+                    }
+
+                    using var registration = cancellationToken.Register(() =>
+                    {
+                        try
+                        {
+                            if (!process.HasExited)
+                            {
+                                process.Kill(entireProcessTree: true);
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    });
+
+                    jsonOutput = process.StandardOutput.ReadToEnd();
+                    process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
+                    if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(jsonOutput))
+                    {
+                        return false;
+                    }
+                }
+
+                using var jsonDoc = System.Text.Json.JsonDocument.Parse(jsonOutput);
+                if (!TrySelectBestJsonTrackArray(jsonDoc, out var tracks))
+                {
+                    return false;
+                }
+
+                var trackElements = tracks.EnumerateArray().ToList();
+                var generalTrack = trackElements.FirstOrDefault(t => IsJsonTrackType(t, "General"));
+                var firstVideoTrack = trackElements.FirstOrDefault(t => IsJsonTrackType(t, "Video"));
+
+                if (generalTrack.ValueKind != System.Text.Json.JsonValueKind.Undefined)
+                {
+                    var container = GetJsonString(generalTrack, "Format");
+                    videoInfo.Container = !string.IsNullOrWhiteSpace(container)
+                        ? container.ToUpperInvariant()
+                        : GuessContainerFromExtension(normalizedPath);
+
+                    var durationRaw = GetJsonString(generalTrack, "Duration");
+                    var durationSeconds = ParseDurationString(durationRaw);
+                    if (durationSeconds <= 0 &&
+                        double.TryParse(durationRaw, System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var durationNumeric))
+                    {
+                        durationSeconds = durationNumeric > 1000 ? durationNumeric / 1000.0 : durationNumeric;
+                    }
+                    if (durationSeconds > 0)
+                    {
+                        videoInfo.Duration = durationSeconds;
+                    }
+                }
+
+                if (firstVideoTrack.ValueKind != System.Text.Json.JsonValueKind.Undefined)
+                {
+                    var codec = GetJsonString(firstVideoTrack, "Format");
+                    videoInfo.VideoCodec = NormalizeCodecName(codec);
+                    var codecId = GetJsonString(firstVideoTrack, "CodecID");
+                    videoInfo.VideoCodecTag = !string.IsNullOrEmpty(codecId) ? codecId.ToUpperInvariant() : string.Empty;
+
+                    if (TryParseMediaInfoInt(GetJsonString(firstVideoTrack, "Width"), out var width))
+                        videoInfo.Width = width;
+                    if (TryParseMediaInfoInt(GetJsonString(firstVideoTrack, "Height"), out var height))
+                        videoInfo.Height = height;
+
+                    if (double.TryParse(GetJsonString(firstVideoTrack, "FrameRate"),
+                        System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out var frameRate))
+                    {
+                        videoInfo.FrameRate = frameRate;
+                    }
+
+                    if (TryParseMediaInfoInt(GetJsonString(firstVideoTrack, "BitDepth"), out var bitDepth))
+                    {
+                        videoInfo.BitDepth = bitDepth;
+                    }
+                }
+
+                // Populate audio/subtitle tracks minimally so downstream scoring does not regress.
+                foreach (var track in trackElements.Where(t => IsJsonTrackType(t, "Audio")))
+                {
+                    var audioTrack = new AudioTrack
+                    {
+                        Codec = NormalizeAudioCodec(GetJsonString(track, "CodecID", "Format")),
+                        Language = GetJsonString(track, "Language"),
+                        Channels = TryParseMediaInfoInt(GetJsonString(track, "Channels"), out var ch) ? ch : 2,
+                        SampleRate = TryParseMediaInfoInt(GetJsonString(track, "SamplingRate"), out var sr) ? sr : 48000
+                    };
+                    videoInfo.AudioTracks.Add(audioTrack);
+                }
+
+                foreach (var track in trackElements.Where(t => IsJsonTrackType(t, "Text")))
+                {
+                    var subtitleTrack = new SubtitleTrack
+                    {
+                        Format = NormalizeSubtitleFormat(GetJsonString(track, "Format")),
+                        Language = GetJsonString(track, "Language"),
+                        IsEmbedded = true
+                    };
+                    videoInfo.SubtitleTracks.Add(subtitleTrack);
+                }
+
+                if (string.IsNullOrWhiteSpace(videoInfo.Container))
+                {
+                    videoInfo.Container = GuessContainerFromExtension(normalizedPath);
+                }
+
+                return !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) ||
+                       !string.IsNullOrWhiteSpace(videoInfo.Container) ||
+                       videoInfo.Duration > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "mediainfo JSON fallback failed for {FilePath}", normalizedPath);
+                return false;
+            }
+        }
+
+        private static bool IsJsonTrackType(System.Text.Json.JsonElement track, string expectedType)
+        {
+            var type = GetJsonString(track, "@type");
+            return string.Equals(type, expectedType, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TrySelectBestJsonTrackArray(System.Text.Json.JsonDocument jsonDoc, out System.Text.Json.JsonElement tracks)
+        {
+            tracks = default;
+            var root = jsonDoc.RootElement;
+
+            if (root.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                root.TryGetProperty("media", out var mediaRootObj) &&
+                mediaRootObj.ValueKind != System.Text.Json.JsonValueKind.Null &&
+                mediaRootObj.TryGetProperty("track", out var directTracks) &&
+                directTracks.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                tracks = directTracks;
+                return true;
+            }
+
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            var bestScore = int.MinValue;
+            System.Text.Json.JsonElement bestTracks = default;
+            var found = false;
+
+            foreach (var item in root.EnumerateArray())
+            {
+                if (item.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                    !item.TryGetProperty("media", out var mediaArrayObj) ||
+                    mediaArrayObj.ValueKind == System.Text.Json.JsonValueKind.Null ||
+                    !mediaArrayObj.TryGetProperty("track", out var candidateTracks) ||
+                    candidateTracks.ValueKind != System.Text.Json.JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                var score = ScoreJsonTrackArray(candidateTracks);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestTracks = candidateTracks;
+                    found = true;
+                }
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+
+            tracks = bestTracks;
+            return true;
+        }
+
+        private static int ScoreJsonTrackArray(System.Text.Json.JsonElement tracks)
+        {
+            var score = 0;
+            foreach (var track in tracks.EnumerateArray())
+            {
+                var type = GetJsonString(track, "@type");
+                if (string.Equals(type, "Video", StringComparison.OrdinalIgnoreCase))
+                    score += 100;
+                else if (string.Equals(type, "General", StringComparison.OrdinalIgnoreCase))
+                    score += 25;
+                else if (string.Equals(type, "Audio", StringComparison.OrdinalIgnoreCase))
+                    score += 10;
+                else if (string.Equals(type, "Text", StringComparison.OrdinalIgnoreCase))
+                    score += 5;
+            }
+            return score;
+        }
+
+        private static XElement? SelectBestMediaElement(XElement rootElement, XNamespace ns)
+        {
+            IEnumerable<XElement> mediaCandidates;
+            if (string.Equals(rootElement.Name.LocalName, "MediaInfo", StringComparison.OrdinalIgnoreCase))
+            {
+                mediaCandidates = rootElement.Elements().Where(e => string.Equals(e.Name.LocalName, "media", StringComparison.OrdinalIgnoreCase));
+            }
+            else if (string.Equals(rootElement.Name.LocalName, "media", StringComparison.OrdinalIgnoreCase))
+            {
+                mediaCandidates = new[] { rootElement };
+            }
+            else
+            {
+                mediaCandidates = rootElement.Descendants().Where(e => string.Equals(e.Name.LocalName, "media", StringComparison.OrdinalIgnoreCase));
+            }
+
+            var bestScore = int.MinValue;
+            XElement? best = null;
+            foreach (var media in mediaCandidates)
+            {
+                var tracks = media.Descendants().Where(e => string.Equals(e.Name.LocalName, "track", StringComparison.OrdinalIgnoreCase));
+                var score = 0;
+                foreach (var track in tracks)
+                {
+                    var type = track.Attribute("type")?.Value ?? string.Empty;
+                    if (string.Equals(type, "Video", StringComparison.OrdinalIgnoreCase))
+                        score += 100;
+                    else if (string.Equals(type, "General", StringComparison.OrdinalIgnoreCase))
+                        score += 25;
+                    else if (string.Equals(type, "Audio", StringComparison.OrdinalIgnoreCase))
+                        score += 10;
+                    else if (string.Equals(type, "Text", StringComparison.OrdinalIgnoreCase))
+                        score += 5;
+                }
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = media;
+                }
+            }
+
+            // Fallback to previous behavior if no candidate could be scored
+            return best
+                ?? rootElement.Element(ns + "media")
+                ?? rootElement.Element("media")
+                ?? rootElement.Descendants(ns + "media").FirstOrDefault()
+                ?? rootElement.Descendants("media").FirstOrDefault();
+        }
+
+        private static string GetJsonString(System.Text.Json.JsonElement element, params string[] propertyNames)
+        {
+            foreach (var propertyName in propertyNames)
+            {
+                if (element.TryGetProperty(propertyName, out var prop))
+                {
+                    return prop.ValueKind switch
+                    {
+                        System.Text.Json.JsonValueKind.String => prop.GetString() ?? string.Empty,
+                        System.Text.Json.JsonValueKind.Number => prop.ToString(),
+                        _ => string.Empty
+                    };
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static void WriteDebugLog(string hypothesisId, string location, string message, object data)
+        {
+            try
+            {
+                var payload = new
+                {
+                    sessionId = "3ebaec",
+                    runId = "pre-fix",
+                    hypothesisId,
+                    location,
+                    message,
+                    data,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                };
+                var json = System.Text.Json.JsonSerializer.Serialize(payload);
+                var endpoints = new[]
+                {
+                    "http://127.0.0.1:7699/ingest/76de9862-df1a-4420-bd96-f7a2beb1c576",
+                    "http://host.docker.internal:7699/ingest/76de9862-df1a-4420-bd96-f7a2beb1c576"
+                };
+                foreach (var endpoint in endpoints)
+                {
+                    try
+                    {
+                        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                        content.Headers.Add("X-Debug-Session-Id", "3ebaec");
+                        var response = DebugHttpClient.PostAsync(endpoint, content).GetAwaiter().GetResult();
+                        if (response.IsSuccessStatusCode)
+                        {
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static string GuessContainerFromExtension(string filePath)
+        {
+            var ext = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant();
+            return ext switch
+            {
+                "MP4" or "M4V" or "MOV" => "MP4",
+                "MKV" or "MKA" => "MKV",
+                "WEBM" => "WebM",
+                "TS" or "M2TS" => "TS",
+                "OGG" or "OGV" => "OGG",
+                "AVI" => "AVI",
+                _ => ext
+            };
+        }
+
+        private static bool TryParseMediaInfoInt(string rawValue, out int value)
+        {
+            value = 0;
+            if (string.IsNullOrWhiteSpace(rawValue))
+            {
+                return false;
+            }
+
+            // Common MediaInfo formats include units/separators, e.g.:
+            // "1 920 pixels", "1,080", "1920".
+            var digitsOnly = new string(rawValue.Where(char.IsDigit).ToArray());
+            if (string.IsNullOrEmpty(digitsOnly))
+            {
+                return false;
+            }
+
+            return int.TryParse(digitsOnly, out value) && value > 0;
+        }
+
+        private double TryGetDurationFromMediaInfoInform(string filePath, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "mediainfo",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                psi.ArgumentList.Add("--Inform=General;%Duration%");
+                psi.ArgumentList.Add(filePath);
+
+                using var process = Process.Start(psi);
+                if (process == null)
+                {
+                    return 0;
+                }
+
+                using var registration = cancellationToken.Register(() =>
+                {
+                    try
+                    {
+                        if (!process.HasExited)
+                        {
+                            process.Kill(entireProcessTree: true);
+                        }
+                    }
+                    catch
+                    {
+                    }
+                });
+
+                var output = process.StandardOutput.ReadToEnd().Trim();
+                process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
+                #region agent log
+                WriteDebugLog("H2", "Services/VideoAnalyzerService.cs:TryGetDurationFromMediaInfoInform:result", "mediainfo --Inform result", new
+                {
+                    filePath,
+                    exitCode = process.ExitCode,
+                    output
+                });
+                #endregion
+                if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
+                {
+                    return 0;
+                }
+
+                if (!double.TryParse(output, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out var durationRaw))
+                {
+                    return 0;
+                }
+
+                // --Inform Duration is typically milliseconds.
+                if (durationRaw > 1000)
+                {
+                    return durationRaw / 1000.0;
+                }
+
+                return durationRaw > 0 ? durationRaw : 0;
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         /// <summary>

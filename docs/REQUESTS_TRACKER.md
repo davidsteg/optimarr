@@ -6,9 +6,14 @@ Append new rows; do not create one file per item.
 ## Bug Reports
 | ID | Story ID | Linked RQ Task IDs | Priority | Title | Status | Evidence |
 |---|---|---|---|---|---|---|
-| BUG-20260301-01 | STORY-REQ-BUG-001 | RQ-BA1, RQ-E1, RQ-R1, RQ-Q1, RQ-DOC1 | P2 | Database migration banner repeats on refresh | Closed (implemented + QA revalidated) | `docs/TASKS.md` (RQ-E1 ✅, RQ-R1 ✅, RQ-Q1 ✅), `docs/STORY_TRACKING.md` (Recent Stories), `wwwroot/js/migration.js` |
-| BUG-20260301-02 | STORY-REQ-BUG-002 | RQ-BA1, RQ-E2, RQ-R1, RQ-Q1, RQ-DOC1 | P2 | Broken-only filter still shows non-broken media | Closed (implemented + QA revalidated) | `docs/TASKS.md` (RQ-E2 ✅, RQ-R1 ✅, RQ-Q1 ✅), `docs/STORY_TRACKING.md` (Recent Stories), `Controllers/LibraryController.cs` |
-| BUG-20260301-03 | STORY-REQ-BUG-003 | RQ-BA1, RQ-E3, RQ-R1, RQ-Q1, RQ-DOC1 | P1 | Permission-handling failure on restricted files | Closed (implemented + QA/security revalidated) | `docs/TASKS.md` (RQ-E3 ✅, RQ-R1 ✅, RQ-Q1 ✅), `docs/STORY_TRACKING.md` (Recent Stories), `Services/LibraryScannerService.cs`, `Controllers/LibraryController.cs` |
+| - | - | - | - | No open bugs | - | Closed bugs archived below |
+
+## Archived Closed Bugs
+| ID | Story ID | Linked RQ Task IDs | Priority | Title | Status | Evidence |
+|---|---|---|---|---|---|---|
+| BUG-20260301-01 | STORY-REQ-BUG-001 | RQ-BA1, RQ-E1, RQ-R1, RQ-Q1, RQ-DOC1 | P2 | Database migration banner repeats on refresh | Closed (implemented + QA revalidated) | `docs/TASKS.md`, `docs/STORY_TRACKING.md`, `wwwroot/js/migration.js` |
+| BUG-20260301-02 | STORY-REQ-BUG-002 | RQ-BA1, RQ-E2, RQ-R1, RQ-Q1, RQ-DOC1 | P2 | Broken-only filter still shows non-broken media | Closed (regression fixed, pending QA recheck) | `docs/TASKS.md`, `docs/STORY_TRACKING.md`, `Controllers/LibraryController.cs`, `wwwroot/js/browse.js` |
+| BUG-20260301-03 | STORY-REQ-BUG-003 | RQ-BA1, RQ-E3, RQ-R1, RQ-Q1, RQ-DOC1 | P1 | Permission-handling failure on restricted files | Closed (implemented + QA/security revalidated) | `docs/TASKS.md`, `docs/STORY_TRACKING.md`, `Services/LibraryScannerService.cs`, `Controllers/LibraryController.cs` |
 
 ### Bug Details (for the selected ID)
 - Related Story ID:

@@ -7,10 +7,11 @@ services:
     ports:
       - "5000:8080"
     volumes:
-      - ./config:/app/config
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./videos:/videos:ro
+      - /mnt/d/Nextcloud/Project/Optimarr/config:/app/config
+      - /mnt/d/Nextcloud/Project/Optimarr/data:/app/data
+      - /mnt/d/Nextcloud/Project/Optimarr/logs:/app/logs
+      - /mnt/d/Nextcloud/Project/Optimarr/videos:/videos:ro
+      - /mnt/host/wsl/Ubuntu/mnt/media:/media:ro
     restart: unless-stopped
     networks:
       - servarr-network

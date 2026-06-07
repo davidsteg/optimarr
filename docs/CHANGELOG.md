@@ -10,12 +10,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed migration banner refresh behavior in `wwwroot/js/migration.js`.
+  - Banner no longer shows during transient `checking` status on page refresh.
+  - Polling still continues during `checking` so active migrations (`creating`/`migrating`) are detected and displayed correctly.
+- Fixed broken-only browse filtering regression across API + UI guardrails.
+  - Added a final server-side response-time broken filter guard in `Controllers/LibraryController.cs` (`/api/library/videos`) so transformed/deduplicated results remain strict for `isBroken=true`.
+  - Added client-side strict broken detection fallback in `wwwroot/js/browse.js` (`isBroken`/`IsBroken`) so broken cards and broken-only rendering stay accurate if payload casing differs.
+- Improved permission-tolerant scan handling in `Services/LibraryScannerService.cs`.
+  - Replaced direct `FileInfo(...).Length` reads with safe fallback file-size probes so restricted/locked files do not trigger secondary scanner failures while saving analysis/failure records.
+  - Added a relaxed share-mode size fallback (`FileShare.ReadWrite | FileShare.Delete`) to try reading file metadata despite restrictive access setups.
+- Improved scan failure messaging for permission-vs-policy clarity.
+  - `Services/LibraryScannerService.cs` now distinguishes path allowlist policy blocks from filesystem access failures in client-safe failed-file messages.
+  - UI/API failure surfaces now report `File path is outside configured library roots.` for whitelist violations instead of the generic permission-restricted message.
+- Reduced first-attempt false negatives during media scan analysis.
+  - `Services/LibraryScannerService.cs` now retries transient analysis/report failures up to 3 attempts before classifying a file as failed/broken.
+  - Report generation failures no longer mark already-successful analysis results as broken; scan stores analysis with fallback report text.
+- Improved MediaInfo parsing robustness to reduce false "codec/container missing" broken classification.
+  - `Services/VideoAnalyzerService.cs` now resolves tracks case-insensitively and across XML namespace variants.
+  - Container fallback from file extension now applies even when MediaInfo General track is missing/partial.
+- Reduced false "invalid resolution (width/height=0)" broken classifications.
+  - `Services/VideoAnalyzerService.cs` now parses MediaInfo dimension values with units/separators (e.g. `1 920 pixels`) into numeric width/height before validation.
+- Improved broken-file recovery and conservative resolution handling in scan persistence.
+  - `Services/LibraryScannerService.cs` now re-analyzes and updates existing broken records during scans instead of always skipping existing entries.
+  - Files with missing width/height are no longer auto-marked broken when codec/container/duration/file-size metadata is otherwise valid.
+- Aligned manual/rescan controller paths with conservative broken-resolution logic.
+  - `Controllers/LibraryController.cs` now avoids setting `Invalid video resolution (width or height is 0)` when other core metadata is valid, matching scanner-side behavior.
+- Fixed broken-reason ordering so duration/file-size failures are not mislabeled as resolution failures.
+  - Validation order now checks codec/container, duration, and file size before width/height in both scanner and controller reanalysis flows.
+- Hardened duration extraction for valid files that still returned duration `0`.
+  - `Services/VideoAnalyzerService.cs` now falls back to `mediainfo --Inform=General;%Duration%` when XML duration parsing fails.
+  - Scanner/controller broken classification now treats missing duration as non-broken when codec/container/resolution/file-size metadata is otherwise valid.
+- Added targeted fallback for `mediainfo` `media:null`/missing-media responses.
+  - `Services/VideoAnalyzerService.cs` now retries extraction with `--Output=JSON` using normalized Unicode file paths before failing metadata extraction.
+  - This alternate invocation strategy reduces false broken classification when XML mode returns no track payload.
+- Fixed primary `mediainfo` path handling for Unicode filenames on Linux mounts.
+  - `Services/VideoAnalyzerService.cs` now uses the original file path for primary XML extraction and applies normalized path variants only in fallback retries.
+- Deepened MediaInfo fallback selection for malformed multi-entry payloads.
+  - `Services/VideoAnalyzerService.cs` now selects the best XML `media` element by track quality instead of taking the first (which can be empty).
+  - JSON fallback now supports both object and array root payloads and picks the best track set before parsing metadata.
+- Relaxed duration-only broken classification to avoid false positives on valid files.
+  - Scanner and controller reanalysis now require only missing codec/container or zero file size (not missing resolution) before assigning `Invalid duration (duration is 0 or negative)`.
+- Corrected broken reason mapping for analyzer-empty metadata cases.
+  - Scanner/controller now report `Media metadata extraction failed (empty track data returned by analyzer)` when codec/duration/resolution/audio are all missing, instead of incorrectly labeling such cases as duration-only failures.
+  - Aligned `videos/rescan-broken` classification logic with the main rescan/scanner decision order.
+
 ## [1.2.2] - 2026-03-02
 
 ### Added
 - Added `docs/REQUESTS_TRACKER.md` as a single shared file for both bug reports and feature requests.
 
 ### Changed
+- Cleaned up solved bug/request/task views for lower-noise active tracking.
+  - `docs/REQUESTS_TRACKER.md` now shows only open bugs in the active section and moves solved bugs to `Archived Closed Bugs`.
+  - `docs/TASKS.md` request-sync section now archives solved `RQ-*` details and keeps only active request/story direction.
+  - Added `docs/reports/REPORT_ACTIVE_STATUS.md` as a concise active-items view while preserving full historical report files.
 - Reconciled request-cycle wording across tracker/task docs after `RQ-Q1` completion.
   - Updated `docs/REQUESTS_TRACKER.md` bug rows to reflect QA-complete state (`RQ-Q1 ✅`) and removed stale "QA follow-up pending" language.
 - Started Feature Pack sequence in task planning order.

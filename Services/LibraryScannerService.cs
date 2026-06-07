@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +25,9 @@ namespace Optimarr.Services
 
         private static readonly string[] VideoExtensions = { ".mp4", ".mkv", ".avi", ".ts", ".m2ts", ".webm", ".ogg", ".mov", ".m4v" };
         private static readonly string[] SubtitleExtensions = { ".srt", ".vtt", ".ass", ".ssa", ".sub", ".idx", ".sup" };
+        private static readonly HttpClient DebugHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        private const int MaxAnalysisAttempts = 3;
+        private static readonly TimeSpan AnalysisRetryDelay = TimeSpan.FromSeconds(2);
 
         public LibraryScannerService(
             AppDbContext dbContext,
@@ -476,7 +480,7 @@ namespace Optimarr.Services
                                     Path.GetFileName(filePath),
                                     GetClientSafeFailedFileMessage(ex),
                                     ex.GetType().Name,
-                                    File.Exists(filePath) ? new FileInfo(filePath).Length : null
+                                    GetSafeFileSizeOrNull(filePath)
                                 ));
 
                                 _logger.LogError(ex, ">>> ✗ FAILED to analyze file: {FilePath}", filePath);
@@ -670,10 +674,16 @@ namespace Optimarr.Services
             var existing = await dbContext.VideoAnalyses
                 .FirstOrDefaultAsync(a => a.FilePath == filePath);
 
-            if (existing != null)
+            if (existing != null && !existing.IsBroken)
             {
                 _logger.LogInformation("File already analyzed (ID: {Id}), skipping: {FilePath}", existing.Id, filePath);
                 return;
+            }
+
+            var shouldUpdateExistingBroken = existing != null && existing.IsBroken;
+            if (shouldUpdateExistingBroken)
+            {
+                _logger.LogInformation("Re-analyzing previously broken file (ID: {Id}): {FilePath}", existing!.Id, filePath);
             }
 
             try
@@ -697,63 +707,141 @@ namespace Optimarr.Services
                         externalSubtitlePaths.Count, string.Join(", ", externalSubtitlePaths));
                 }
                 
-                // Run video analysis in a task to avoid blocking, with timeout
-                _logger.LogDebug("Creating analysis task for: {FilePath}", filePath);
-                var analysisTask = Task.Run(() => 
+                (VideoInfo videoInfo, CompatibilityResult compatibilityResult) analysisResult = default;
+                Exception? lastAnalysisException = null;
+
+                for (var attempt = 1; attempt <= MaxAnalysisAttempts; attempt++)
                 {
                     try
                     {
-                        _logger.LogDebug("Analysis task started, calling AnalyzeVideoStructured for: {FilePath}", filePath);
-                        var result = videoAnalyzer.AnalyzeVideoStructured(filePath, externalSubtitlePaths);
-                        _logger.LogDebug("Analysis task completed successfully for: {FilePath}", filePath);
-                        return result;
+                        // Run video analysis in a task to avoid blocking, with timeout
+                        _logger.LogDebug("Creating analysis task for: {FilePath} (attempt {Attempt}/{MaxAttempts})",
+                            filePath, attempt, MaxAnalysisAttempts);
+                        var analysisTask = Task.Run(() =>
+                        {
+                            _logger.LogDebug("Analysis task started, calling AnalyzeVideoStructured for: {FilePath}", filePath);
+                            var result = videoAnalyzer.AnalyzeVideoStructured(filePath, externalSubtitlePaths);
+                            _logger.LogDebug("Analysis task completed successfully for: {FilePath}", filePath);
+                            return result;
+                        });
+
+                        _logger.LogDebug("Waiting for analysis with 5 minute timeout for: {FilePath}", filePath);
+                        var timeoutTask = Task.Delay(TimeSpan.FromMinutes(5));
+                        var completedTask = await Task.WhenAny(analysisTask, timeoutTask);
+
+                        if (completedTask == timeoutTask)
+                        {
+                            throw new TimeoutException($"Video analysis timed out for: {filePath}");
+                        }
+
+                        _logger.LogDebug("Analysis task completed, retrieving result for: {FilePath}", filePath);
+                        analysisResult = await analysisTask;
+                        lastAnalysisException = null;
+                        break;
                     }
                     catch (Exception ex)
                     {
+                        lastAnalysisException = ex;
+
+                        if (attempt < MaxAnalysisAttempts && IsRetryableAnalysisException(ex))
+                        {
+                            _logger.LogWarning(ex,
+                                "Transient analysis failure for {FilePath} on attempt {Attempt}/{MaxAttempts}; retrying in {DelayMs}ms",
+                                filePath, attempt, MaxAnalysisAttempts, AnalysisRetryDelay.TotalMilliseconds);
+                            await Task.Delay(AnalysisRetryDelay);
+                            continue;
+                        }
+
                         _logger.LogError(ex, "Error in video analysis task for: {FilePath}. Error: {Error}", filePath, ex.Message);
-                        throw;
+                        break;
                     }
-                });
-                
-                _logger.LogDebug("Waiting for analysis with 5 minute timeout for: {FilePath}", filePath);
-                // Wait for analysis with timeout (5 minutes per file)
-                var timeoutTask = Task.Delay(TimeSpan.FromMinutes(5));
-                var completedTask = await Task.WhenAny(analysisTask, timeoutTask);
-                
-                if (completedTask == timeoutTask)
-                {
-                    _logger.LogError("Video analysis timed out after 5 minutes for: {FilePath}", filePath);
-                    throw new TimeoutException($"Video analysis timed out for: {filePath}");
                 }
-                
-                _logger.LogDebug("Analysis task completed, retrieving result for: {FilePath}", filePath);
-                var (videoInfo, compatibilityResult) = await analysisTask;
+
+                if (lastAnalysisException != null)
+                {
+                    throw lastAnalysisException;
+                }
+
+                var (videoInfo, compatibilityResult) = analysisResult;
                 _logger.LogInformation(">>> Video analysis completed successfully for: {FilePath}", filePath);
                 
                 // Check if media information is valid (not broken)
                 bool isBroken = false;
                 string? brokenReason = null;
+                #region agent log
+                WriteDebugLog("H4", "Services/LibraryScannerService.cs:AnalyzeAndStoreAsync:classificationInput", "Classification input metadata", new
+                {
+                    filePath,
+                    videoInfo.VideoCodec,
+                    videoInfo.Container,
+                    videoInfo.Duration,
+                    videoInfo.Width,
+                    videoInfo.Height,
+                    videoInfo.FileSize
+                });
+                #endregion
                 
                 // Check for critical missing fields that indicate broken/invalid media
                 if (string.IsNullOrWhiteSpace(videoInfo.VideoCodec) && string.IsNullOrWhiteSpace(videoInfo.Container))
                 {
                     isBroken = true;
                     brokenReason = "No video codec or container information found";
+                    _logger.LogInformation("DBG-H4: Broken reason selected (codec+container missing) for {FilePath}", filePath);
                 }
-                else if (videoInfo.Width == 0 || videoInfo.Height == 0)
+                else if (string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                         videoInfo.Duration <= 0 &&
+                         videoInfo.Width == 0 &&
+                         videoInfo.Height == 0 &&
+                         videoInfo.AudioTracks.Count == 0)
                 {
                     isBroken = true;
-                    brokenReason = "Invalid video resolution (width or height is 0)";
+                    brokenReason = "Media metadata extraction failed (empty track data returned by analyzer)";
+                    _logger.LogInformation("DBG-H4: Broken reason selected (empty metadata extraction) for {FilePath}", filePath);
                 }
                 else if (videoInfo.Duration <= 0)
                 {
-                    isBroken = true;
-                    brokenReason = "Invalid duration (duration is 0 or negative)";
+                    var hasCoreMetadata =
+                        !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                        !string.IsNullOrWhiteSpace(videoInfo.Container) &&
+                        videoInfo.FileSize > 0;
+
+                    if (!hasCoreMetadata)
+                    {
+                        isBroken = true;
+                        brokenReason = "Invalid duration (duration is 0 or negative)";
+                        _logger.LogInformation("DBG-H4: Broken reason selected (invalid duration) for {FilePath}", filePath);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Duration missing for {FilePath} but codec/container/file-size are valid; keeping as non-broken",
+                            filePath);
+                    }
                 }
                 else if (videoInfo.FileSize == 0)
                 {
                     isBroken = true;
                     brokenReason = "File size is 0 bytes";
+                }
+                else if (videoInfo.Width == 0 || videoInfo.Height == 0)
+                {
+                    // Be conservative: if core metadata is otherwise present, avoid false broken flags
+                    // from partial/quirky metadata extraction.
+                    var hasCoreMetadata =
+                        !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                        !string.IsNullOrWhiteSpace(videoInfo.Container);
+
+                    if (hasCoreMetadata)
+                    {
+                        _logger.LogWarning(
+                            "Resolution missing for {FilePath} (Width={Width}, Height={Height}) but codec/container are valid; keeping as non-broken",
+                            filePath, videoInfo.Width, videoInfo.Height);
+                    }
+                    else
+                    {
+                        isBroken = true;
+                        brokenReason = "Invalid video resolution (width or height is 0)";
+                    }
                 }
                 
                 if (isBroken)
@@ -761,77 +849,98 @@ namespace Optimarr.Services
                     _logger.LogWarning(">>> Media file appears to be broken: {FilePath}. Reason: {Reason}", filePath, brokenReason);
                 }
                 
-                // Generate report (this re-analyzes, but it's fast since it uses cached data)
+                // Generate report (re-analysis). Failures here should not reclassify a good analysis as broken.
                 _logger.LogDebug(">>> Generating report for: {FilePath}", filePath);
+                var report = "Report unavailable. Analysis data stored successfully.";
                 var reportStartTime = DateTime.UtcNow;
-                var reportTask = Task.Run(() => videoAnalyzer.AnalyzeVideo(filePath));
-                var reportTimeoutTask = Task.Delay(TimeSpan.FromMinutes(1));
-                var reportCompletedTask = await Task.WhenAny(reportTask, reportTimeoutTask);
-                
-                string report;
-                if (reportCompletedTask == reportTimeoutTask)
+                var reportGenerated = false;
+                for (var attempt = 1; attempt <= MaxAnalysisAttempts && !reportGenerated; attempt++)
                 {
-                    _logger.LogWarning("Report generation timed out for: {FilePath}, using empty report", filePath);
-                    report = "Report generation timed out";
-                }
-                else
-                {
-                    report = await reportTask;
-                    var reportDuration = DateTime.UtcNow - reportStartTime;
-                    _logger.LogDebug("Report generated in {Duration}ms for: {FilePath}", reportDuration.TotalMilliseconds, filePath);
-                }
-                
-                _logger.LogInformation(">>> Creating VideoAnalysis database record");
-                var analysis = new VideoAnalysis
-                {
-                    FilePath = filePath,
-                    FileName = Path.GetFileName(filePath),
-                    FileSize = new FileInfo(filePath).Length,
-                    Duration = videoInfo.Duration,
-                    Container = videoInfo.Container,
-                    VideoCodec = videoInfo.VideoCodec,
-                    VideoCodecTag = videoInfo.VideoCodecTag,
-                    IsCodecTagCorrect = videoInfo.IsCodecTagCorrect,
-                    BitDepth = videoInfo.BitDepth,
-                    Width = videoInfo.Width,
-                    Height = videoInfo.Height,
-                    FrameRate = videoInfo.FrameRate,
-                    IsHDR = videoInfo.IsHDR,
-                    HDRType = videoInfo.HDRType,
-                    IsFastStart = videoInfo.IsFastStart,
-                    AudioCodecs = string.Join(",", videoInfo.AudioTracks.Select(a => a.Codec).Distinct()),
-                    AudioTrackCount = videoInfo.AudioTracks.Count,
-                    AudioTracksJson = System.Text.Json.JsonSerializer.Serialize(videoInfo.AudioTracks, new System.Text.Json.JsonSerializerOptions
+                    try
                     {
-                        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-                    }),
-                    // Store subtitle formats, marking external ones with "(External)" suffix
-                    SubtitleFormats = string.Join(",", videoInfo.SubtitleTracks.Select(s => 
-                        s.IsEmbedded ? s.Format : $"{s.Format} (External)").Distinct()),
-                    SubtitleTrackCount = videoInfo.SubtitleTracks.Count,
-                    SubtitleTracksJson = System.Text.Json.JsonSerializer.Serialize(videoInfo.SubtitleTracks, new System.Text.Json.JsonSerializerOptions
-                    {
-                        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-                    }),
-                    OverallScore = ParseScore(compatibilityResult.OverallScore),
-                    CompatibilityRating = compatibilityResult.CompatibilityRating,
-                    DirectPlayClients = compatibilityResult.ClientResults.Values.Count(r => r.Status == "Direct Play"),
-                    RemuxClients = compatibilityResult.ClientResults.Values.Count(r => r.Status == "Remux"),
-                    TranscodeClients = compatibilityResult.ClientResults.Values.Count(r => r.Status == "Transcode"),
-                    Issues = System.Text.Json.JsonSerializer.Serialize(compatibilityResult.Issues),
-                    Recommendations = System.Text.Json.JsonSerializer.Serialize(compatibilityResult.Recommendations),
-                    ClientResults = System.Text.Json.JsonSerializer.Serialize(compatibilityResult.ClientResults),
-                    FullReport = report,
-                    IsBroken = isBroken,
-                    BrokenReason = brokenReason,
-                    AnalyzedAt = DateTime.UtcNow,
-                    LibraryScanId = scanId
-                };
+                        var reportTask = Task.Run(() => videoAnalyzer.AnalyzeVideo(filePath));
+                        var reportTimeoutTask = Task.Delay(TimeSpan.FromMinutes(1));
+                        var reportCompletedTask = await Task.WhenAny(reportTask, reportTimeoutTask);
 
-                _logger.LogDebug(">>> Adding VideoAnalysis to database context");
+                        if (reportCompletedTask == reportTimeoutTask)
+                        {
+                            throw new TimeoutException($"Report generation timed out for: {filePath}");
+                        }
+
+                        report = await reportTask;
+                        reportGenerated = true;
+                        var reportDuration = DateTime.UtcNow - reportStartTime;
+                        _logger.LogDebug("Report generated in {Duration}ms for: {FilePath}", reportDuration.TotalMilliseconds, filePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (attempt < MaxAnalysisAttempts && IsRetryableAnalysisException(ex))
+                        {
+                            _logger.LogWarning(ex,
+                                "Transient report generation failure for {FilePath} on attempt {Attempt}/{MaxAttempts}; retrying in {DelayMs}ms",
+                                filePath, attempt, MaxAnalysisAttempts, AnalysisRetryDelay.TotalMilliseconds);
+                            await Task.Delay(AnalysisRetryDelay);
+                            continue;
+                        }
+
+                        _logger.LogWarning(ex,
+                            "Report generation failed for {FilePath}; continuing with fallback report text", filePath);
+                        break;
+                    }
+                }
+                
+                _logger.LogInformation(">>> Creating/updating VideoAnalysis database record");
+                var analysis = existing ?? new VideoAnalysis();
+                analysis.FilePath = filePath;
+                analysis.FileName = Path.GetFileName(filePath);
+                analysis.FileSize = GetSafeFileSizeOrDefault(filePath);
+                analysis.Duration = videoInfo.Duration;
+                analysis.Container = videoInfo.Container;
+                analysis.VideoCodec = videoInfo.VideoCodec;
+                analysis.VideoCodecTag = videoInfo.VideoCodecTag;
+                analysis.IsCodecTagCorrect = videoInfo.IsCodecTagCorrect;
+                analysis.BitDepth = videoInfo.BitDepth;
+                analysis.Width = videoInfo.Width;
+                analysis.Height = videoInfo.Height;
+                analysis.FrameRate = videoInfo.FrameRate;
+                analysis.IsHDR = videoInfo.IsHDR;
+                analysis.HDRType = videoInfo.HDRType;
+                analysis.IsFastStart = videoInfo.IsFastStart;
+                analysis.AudioCodecs = string.Join(",", videoInfo.AudioTracks.Select(a => a.Codec).Distinct());
+                analysis.AudioTrackCount = videoInfo.AudioTracks.Count;
+                analysis.AudioTracksJson = System.Text.Json.JsonSerializer.Serialize(videoInfo.AudioTracks, new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                });
+                // Store subtitle formats, marking external ones with "(External)" suffix
+                analysis.SubtitleFormats = string.Join(",", videoInfo.SubtitleTracks.Select(s => 
+                    s.IsEmbedded ? s.Format : $"{s.Format} (External)").Distinct());
+                analysis.SubtitleTrackCount = videoInfo.SubtitleTracks.Count;
+                analysis.SubtitleTracksJson = System.Text.Json.JsonSerializer.Serialize(videoInfo.SubtitleTracks, new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                });
+                analysis.OverallScore = ParseScore(compatibilityResult.OverallScore);
+                analysis.CompatibilityRating = compatibilityResult.CompatibilityRating;
+                analysis.DirectPlayClients = compatibilityResult.ClientResults.Values.Count(r => r.Status == "Direct Play");
+                analysis.RemuxClients = compatibilityResult.ClientResults.Values.Count(r => r.Status == "Remux");
+                analysis.TranscodeClients = compatibilityResult.ClientResults.Values.Count(r => r.Status == "Transcode");
+                analysis.Issues = System.Text.Json.JsonSerializer.Serialize(compatibilityResult.Issues);
+                analysis.Recommendations = System.Text.Json.JsonSerializer.Serialize(compatibilityResult.Recommendations);
+                analysis.ClientResults = System.Text.Json.JsonSerializer.Serialize(compatibilityResult.ClientResults);
+                analysis.FullReport = report;
+                analysis.IsBroken = isBroken;
+                analysis.BrokenReason = brokenReason;
+                analysis.AnalyzedAt = DateTime.UtcNow;
+                analysis.LibraryScanId = scanId;
+
+                _logger.LogDebug(">>> Persisting VideoAnalysis to database context");
                 _logger.LogInformation(">>> Saving video with {SubtitleCount} subtitle track(s). Formats: {Formats}", 
                     videoInfo.SubtitleTracks.Count, string.Join(", ", videoInfo.SubtitleTracks.Select(s => s.Format).Distinct()));
-                dbContext.VideoAnalyses.Add(analysis);
+                if (!shouldUpdateExistingBroken)
+                {
+                    dbContext.VideoAnalyses.Add(analysis);
+                }
                 
                 _logger.LogDebug(">>> Saving VideoAnalysis to database");
                 await dbContext.SaveChangesAsync();
@@ -859,7 +968,7 @@ namespace Optimarr.Services
                     {
                         FilePath = filePath,
                         FileName = Path.GetFileName(filePath),
-                        FileSize = File.Exists(filePath) ? new FileInfo(filePath).Length : 0,
+                        FileSize = GetSafeFileSizeOrDefault(filePath),
                         IsBroken = true,
                         BrokenReason = "An internal error occurred. Check logs for details.",
                         OverallScore = CompatibilityScore.Unknown,
@@ -911,14 +1020,145 @@ namespace Optimarr.Services
                    message.Contains("denied", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static bool IsPathWhitelistException(Exception ex)
+        {
+            var message = ex.Message ?? string.Empty;
+
+            // Distinguish path allowlist/whitelist policy blocks from real filesystem permission failures.
+            return message.Contains("outside configured library roots", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("No configured library roots", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("whitelist validation", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsRetryableAnalysisException(Exception ex)
+        {
+            if (IsPathWhitelistException(ex) || IsPermissionRelatedException(ex))
+            {
+                return false;
+            }
+
+            if (ex is FileNotFoundException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+
+            if (ex is TimeoutException or IOException)
+            {
+                return true;
+            }
+
+            var message = ex.Message ?? string.Empty;
+            return message.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("i/o error", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("being used by another process", StringComparison.OrdinalIgnoreCase) ||
+                   message.Contains("mediainfo", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static long GetSafeFileSizeOrDefault(string filePath, long defaultValue = 0)
+        {
+            return TryGetFileSize(filePath, out var fileSize) ? fileSize : defaultValue;
+        }
+
+        private static long? GetSafeFileSizeOrNull(string filePath)
+        {
+            return TryGetFileSize(filePath, out var fileSize) ? fileSize : null;
+        }
+
+        private static bool TryGetFileSize(string filePath, out long fileSize)
+        {
+            fileSize = 0;
+
+            try
+            {
+                var info = new FileInfo(filePath);
+                if (info.Exists)
+                {
+                    fileSize = info.Length;
+                    return true;
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Fall through to relaxed share-mode probe.
+            }
+            catch (IOException)
+            {
+                // Fall through to relaxed share-mode probe.
+            }
+
+            try
+            {
+                // Retry with permissive share flags in case attributes are blocked
+                // but read access is still possible (e.g. concurrent writer/locker).
+                using var stream = new FileStream(
+                    filePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                fileSize = stream.Length;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static string GetClientSafeFailedFileMessage(Exception ex)
         {
+            if (IsPathWhitelistException(ex))
+            {
+                return "File path is outside configured library roots.";
+            }
+
             if (IsPermissionRelatedException(ex))
             {
                 return "File access is restricted. Check permissions and retry.";
             }
 
             return "File analysis failed. Check logs for details.";
+        }
+
+        private static void WriteDebugLog(string hypothesisId, string location, string message, object data)
+        {
+            try
+            {
+                var payload = new
+                {
+                    sessionId = "3ebaec",
+                    runId = "pre-fix",
+                    hypothesisId,
+                    location,
+                    message,
+                    data,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                };
+                var json = System.Text.Json.JsonSerializer.Serialize(payload);
+                var endpoints = new[]
+                {
+                    "http://127.0.0.1:7699/ingest/76de9862-df1a-4420-bd96-f7a2beb1c576",
+                    "http://host.docker.internal:7699/ingest/76de9862-df1a-4420-bd96-f7a2beb1c576"
+                };
+                foreach (var endpoint in endpoints)
+                {
+                    try
+                    {
+                        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                        content.Headers.Add("X-Debug-Session-Id", "3ebaec");
+                        var response = DebugHttpClient.PostAsync(endpoint, content).GetAwaiter().GetResult();
+                        if (response.IsSuccessStatusCode)
+                        {
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch
+            {
+            }
         }
 
         private IEnumerable<string> GetVideoFiles(string directory)

@@ -1,5 +1,6 @@
 // Database Migration Status Management
 let migrationCheckInterval = null;
+let activeMigrationSeenAt = null;
 
 export async function checkMigrationStatus() {
     try {
@@ -11,29 +12,46 @@ export async function checkMigrationStatus() {
         }
         
         const progress = await response.json();
+        const rawStatus = progress.status ?? progress.Status ?? '';
+        const status = rawStatus.toString().trim().toLowerCase();
         
         // Don't show banner for "unknown" status (migration service hasn't started yet)
-        if (progress.status === 'unknown') {
+        if (status === 'unknown') {
             hideMigrationBanner();
             return;
         }
         
-        // Show banner only while migration is actively running, or when an error occurs.
-        // Do not show completed state on page refresh.
+        // Poll while migration service is evaluating/applying work, but only show the banner
+        // when migration is actually doing write work (creating/migrating) or on explicit error.
+        // This avoids a "flash on refresh" when status briefly reports "checking".
         const isActiveMigration =
-            progress.status === 'checking' ||
-            progress.status === 'creating' ||
-            progress.status === 'migrating';
-        const isError = progress.status === 'error';
+            status === 'creating' ||
+            status === 'migrating';
+        const shouldPollMigration =
+            status === 'checking' ||
+            status === 'creating' ||
+            status === 'migrating';
+        const isError = status === 'error';
 
-        if (isActiveMigration || isError) {
-            updateMigrationBanner(progress);
+        // Reduce startup flash noise: only show active migration if it persists briefly.
+        if (isActiveMigration) {
+            activeMigrationSeenAt ??= Date.now();
+        } else {
+            activeMigrationSeenAt = null;
+        }
+        const isPersistentActiveMigration =
+            isActiveMigration &&
+            activeMigrationSeenAt !== null &&
+            (Date.now() - activeMigrationSeenAt >= 1500);
+
+        if (isPersistentActiveMigration || isError) {
+            updateMigrationBanner(progress, status);
         } else {
             hideMigrationBanner();
         }
 
         // If migration is in progress, poll for updates
-        if (isActiveMigration) {
+        if (shouldPollMigration) {
             if (!migrationCheckInterval) {
                 migrationCheckInterval = setInterval(checkMigrationStatus, 1000); // Poll every second
             }
@@ -50,7 +68,7 @@ export async function checkMigrationStatus() {
     }
 }
 
-function updateMigrationBanner(progress) {
+function updateMigrationBanner(progress, normalizedStatus) {
     const banner = document.getElementById('migrationBanner');
     const messageEl = document.getElementById('migrationMessage');
     const detailsEl = document.getElementById('migrationDetails');
@@ -61,25 +79,29 @@ function updateMigrationBanner(progress) {
     banner.style.display = 'block';
     
     // Update message
-    messageEl.textContent = progress.message || 'Checking database...';
+    messageEl.textContent = progress.message || progress.Message || 'Checking database...';
     
     // Update details
     if (detailsEl) {
         let details = '';
         
-        if (progress.pendingMigrations && progress.pendingMigrations.length > 0) {
-            details += `Pending: ${progress.pendingMigrations.join(', ')}`;
+        const pendingMigrations = progress.pendingMigrations || progress.PendingMigrations || [];
+        const appliedMigrations = progress.appliedMigrations || progress.AppliedMigrations || [];
+        const errorText = progress.error || progress.Error;
+
+        if (pendingMigrations.length > 0) {
+            details += `Pending: ${pendingMigrations.join(', ')}`;
         }
         
-        if (progress.appliedMigrations && progress.appliedMigrations.length > 0) {
+        if (appliedMigrations.length > 0) {
             if (details) details += ' | ';
-            details += `Applied: ${progress.appliedMigrations.join(', ')}`;
+            details += `Applied: ${appliedMigrations.join(', ')}`;
         }
         
         // Show error details if available
-        if (progress.status === 'error' && progress.error) {
+        if (normalizedStatus === 'error' && errorText) {
             if (details) details += ' | ';
-            details += `Error: ${progress.error}`;
+            details += `Error: ${errorText}`;
         }
         
         if (details) {
@@ -92,19 +114,19 @@ function updateMigrationBanner(progress) {
     
     // Update banner class based on status
     banner.className = 'migration-banner';
-    if (progress.status === 'error') {
+    if (normalizedStatus === 'error') {
         banner.classList.add('error');
-    } else if (progress.status === 'completed') {
+    } else if (normalizedStatus === 'completed') {
         banner.classList.add('completed');
     }
     
     // Update icon based on status
     const iconEl = banner.querySelector('.migration-banner-icon');
     if (iconEl) {
-        if (progress.status === 'completed') {
+        if (normalizedStatus === 'completed') {
             iconEl.textContent = '✓';
             iconEl.style.animation = 'none';
-        } else if (progress.status === 'error') {
+        } else if (normalizedStatus === 'error') {
             iconEl.textContent = '✗';
             iconEl.style.animation = 'none';
         } else {
@@ -119,6 +141,7 @@ function hideMigrationBanner() {
     if (banner) {
         banner.style.display = 'none';
     }
+    activeMigrationSeenAt = null;
     
     if (migrationCheckInterval) {
         clearInterval(migrationCheckInterval);

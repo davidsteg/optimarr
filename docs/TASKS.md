@@ -180,34 +180,12 @@ Modified files under active development:
 > Source sync:
 > - Request source: `docs/REQUESTS_TRACKER.md` (BUG-20260301-01..03 + feature request intake row)
 > - Story source: `docs/STORY_TRACKING.md` (active feature story + completed request-driven bug stories)
-> - These tasks are not yet included in the Progress Snapshot totals above.
-
-### Request↔Story↔RQ Linkage Map
-
-| Request ID | Story ID | RQ Task IDs |
-|---|---|---|
-| `BUG-20260301-01` | `STORY-REQ-BUG-001` | `RQ-BA1`, `RQ-E1`, `RQ-R1`, `RQ-Q1`, `RQ-DOC1` |
-| `BUG-20260301-02` | `STORY-REQ-BUG-002` | `RQ-BA1`, `RQ-E2`, `RQ-R1`, `RQ-Q1`, `RQ-DOC1` |
-| `BUG-20260301-03` | `STORY-REQ-BUG-003` | `RQ-BA1`, `RQ-E3`, `RQ-R1`, `RQ-Q1`, `RQ-DOC1` |
-| `FR-20260302-01` | `STORY-REQ-FEAT-001` | `RQ-BA2`, `RQ-A1`, `RQ-DOC2` |
-
-### Final RQ Outcome (post security reconciliation)
-- Implementation status: `RQ-E1`, `RQ-E2`, `RQ-E3` are complete.
-- Security review status: `RQ-R1` is complete; no failed-file exception-detail leakage remains in client payloads.
-- QA status: `RQ-Q1` revalidation is complete for targeted regression scope (`RQ-E1/E2/E3`).
+> - RQ cycle is complete and archived (all `RQ-*` tasks closed).
+> - Active request/story work now continues via feature story `STORY-REQ-FEAT-001` and Feature Pack `FP-*` backlog below.
 
 | # | Status | Priority | Task | File(s) |
 |---|--------|----------|------|---------|
-| RQ-BA1 | ✅ | 🟡 | Completed: Added request-driven bug story entries for `BUG-20260301-01..03` with explicit traceability to `RQ-E1..RQ-E3` and later reconciled them into `Recent Stories` after closure | `docs/STORY_TRACKING.md`, `docs/TASKS.md` |
-| RQ-BA2 | ✅ | 🟡 | Completed: Replaced placeholder feature-request row with concrete intake `FR-20260302-01` (priority/title/status and owner-ready wording) in tracker | `docs/REQUESTS_TRACKER.md` |
-| RQ-E1 | ✅ | 🟡 | Completed: migration banner now renders only for active migration/error states and no longer reappears on refresh for completed/idle status | `wwwroot/js/migration.js` |
-| RQ-E2 | ✅ | 🟡 | Completed: re-applied broken filter after in-memory transform pipeline to keep broken-only results strict and prevent non-broken leakage | `Controllers/LibraryController.cs` |
-| RQ-E3 | ✅ | 🟠 | Completed: failed-file/status payloads are sanitized for client responses (write-path and read-path), detailed exception text remains in server logs, and permission failures still route to failed scan items (not broken media by default). | `Services/LibraryScannerService.cs`, `Controllers/LibraryController.cs` |
-| RQ-A1 | ✅ | 🟢 | Completed: Added architecture/design mapping for `FR-20260302-01` (problem/options/selected approach, touchpoints, risks, acceptance criteria, and implementation/testing handoff) | `docs/PLAN.md`, `docs/TASKS.md` |
-| RQ-R1 | ✅ | 🟡 | Completed: focused re-review confirms RQ-E3 payload sanitization is effective (no exception-detail leakage in failed-file/status API payloads), diagnostic detail remains server-side in logs, and permission-edge behavior is preserved. **QA recommendation: GO** for request-cycle scope. | `wwwroot/js/migration.js`, `Controllers/LibraryController.cs`, `Services/LibraryScannerService.cs` |
-| RQ-Q1 | ✅ | 🟡 | Completed: revalidated `RQ-E3` security behavior and request regression scope with added API-level sanitization assertion (`GetScan` failed-file payload), confirmed failed-file tracking continuity, and reconfirmed `RQ-E1` migration-banner + `RQ-E2` broken-only filter regression guards in tests. | `Optimarr.Tests/Regression/RequestRegressionTests.cs`, `docs/reports/REPORT_QA_AGENT.md` |
-| RQ-DOC1 | ✅ | 🟢 | Completed: synchronized request tracker status rows with explicit evidence links and added direct Request ID ↔ Story ID ↔ RQ task mapping columns for auditability | `docs/REQUESTS_TRACKER.md`, `docs/STORY_TRACKING.md`, `docs/CHANGELOG.md` |
-| RQ-DOC2 | ✅ | 🟢 | Completed: `Active Stories` now reflects currently open work only (`FR-20260302-01`), while completed request-driven bug stories were moved to `Recent Stories` with explicit cross-links | `docs/STORY_TRACKING.md` |
+| - | - | - | No open RQ sync tasks | - |
 
 ---
 

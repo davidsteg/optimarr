@@ -54,9 +54,11 @@ export async function loadBrowseMedia() {
         
         // Check for empty results - handle both camelCase and PascalCase from backend
         const items = result.items || result.Items || [];
+        const isVideoBroken = (video) => video.isBroken ?? video.IsBroken ?? false;
+        const displayItems = isBroken ? items.filter(video => isVideoBroken(video) === true) : items;
         const total = result.total !== undefined ? result.total : (result.Total !== undefined ? result.Total : 0);
         
-        if (!items || items.length === 0 || total === 0) {
+        if (!displayItems || displayItems.length === 0 || total === 0) {
             if (grid) {
                 grid.innerHTML = '<div class="empty-state"><p>No media found. Try adjusting your filters.</p></div>';
             }
@@ -66,8 +68,9 @@ export async function loadBrowseMedia() {
         }
         
         if (grid) {
-            grid.innerHTML = items.map(video => {
+            grid.innerHTML = displayItems.map(video => {
                 const rating = video.compatibilityRating ?? 0; // Now 0-100 scale
+                const videoBroken = isVideoBroken(video);
                 
                 // Determine audio type (surround/stereo)
                 let audioType = 'Unknown';
@@ -148,7 +151,7 @@ export async function loadBrowseMedia() {
                 const ratingCategory = getRatingCategory(rating);
                 
                 return `
-                    <div class="media-card ${video.isBroken ? 'broken-media' : ''} ${video.processingStatus === 'Processing' ? 'processing-media' : ''}" data-video-id="${video.id}">
+                    <div class="media-card ${videoBroken ? 'broken-media' : ''} ${video.processingStatus === 'Processing' ? 'processing-media' : ''}" data-video-id="${video.id}">
                         <div class="media-card-checkbox" onclick="event.stopPropagation();">
                             <input type="checkbox" class="browse-video-checkbox" value="${video.id}" onchange="updateBrowseSelection()">
                         </div>
@@ -156,7 +159,7 @@ export async function loadBrowseMedia() {
                         <div class="media-card-header">
                             ${servarrIcons}
                             ${processingBadge}
-                            ${video.isBroken ? '<span class="broken-badge" title="Broken or unreadable media file">⚠️ Broken</span>' : `<span class="rating-badge rating-${ratingCategory}">${rating}/100</span>`}
+                            ${videoBroken ? '<span class="broken-badge" title="Broken or unreadable media file">⚠️ Broken</span>' : `<span class="rating-badge rating-${ratingCategory}">${rating}/100</span>`}
                             ${video.isHDR ? '<span class="hdr-badge">HDR</span>' : '<span class="sdr-badge">SDR</span>'}
                             ${audioType !== 'Unknown' ? `<span class="audio-badge audio-${audioType.toLowerCase()}">${audioType}</span>` : ''}
                             ${qualityTag ? `<span class="quality-badge">${qualityTag}</span>` : ''}

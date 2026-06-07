@@ -9,6 +9,7 @@ using Optimarr.Services;
 using System.IO;
 using System.Linq;
 using System.Security;
+using System.Text;
 using System.Threading;
 
 namespace Optimarr.Controllers
@@ -17,6 +18,7 @@ namespace Optimarr.Controllers
     [Route("api/[controller]")]
     public class LibraryController : ControllerBase
     {
+        private static readonly HttpClient DebugHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
         private readonly AppDbContext _dbContext;
         private readonly LibraryScannerService _scannerService;
         private readonly VideoAnalyzerService _videoAnalyzer;
@@ -385,20 +387,43 @@ namespace Optimarr.Controllers
                             isBroken = true;
                             brokenReason = "No video codec or container information found";
                         }
-                        else if (videoInfo.Width == 0 || videoInfo.Height == 0)
+                        else if (string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                                 videoInfo.Duration <= 0 &&
+                                 videoInfo.Width == 0 &&
+                                 videoInfo.Height == 0 &&
+                                 videoInfo.AudioTracks.Count == 0)
                         {
                             isBroken = true;
-                            brokenReason = "Invalid video resolution (width or height is 0)";
+                            brokenReason = "Media metadata extraction failed (empty track data returned by analyzer)";
                         }
                         else if (videoInfo.Duration <= 0)
                         {
-                            isBroken = true;
-                            brokenReason = "Invalid duration (duration is 0 or negative)";
+                            var hasCoreMetadata =
+                                !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                                !string.IsNullOrWhiteSpace(videoInfo.Container) &&
+                                videoInfo.FileSize > 0;
+                            if (!hasCoreMetadata)
+                            {
+                                isBroken = true;
+                                brokenReason = "Invalid duration (duration is 0 or negative)";
+                            }
                         }
                         else if (videoInfo.FileSize == 0)
                         {
                             isBroken = true;
                             brokenReason = "File size is 0 bytes";
+                        }
+                        else if (videoInfo.Width == 0 || videoInfo.Height == 0)
+                        {
+                            var hasCoreMetadata =
+                                !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                                !string.IsNullOrWhiteSpace(videoInfo.Container);
+
+                            if (!hasCoreMetadata)
+                            {
+                                isBroken = true;
+                                brokenReason = "Invalid video resolution (width or height is 0)";
+                            }
                         }
 
                         // Update the existing video analysis record
@@ -1576,9 +1601,6 @@ namespace Optimarr.Controllers
                     ).First())
                     .ToList();
 
-                // Calculate total after deduplication
-                var total = deduplicatedVideos.Count;
-
                 // Apply sorting
                 var sortByLower = (sortBy ?? "analyzedAt").ToLowerInvariant();
                 var sortOrderLower = (sortOrder ?? "desc").ToLowerInvariant();
@@ -1605,6 +1627,16 @@ namespace Optimarr.Controllers
                         ? deduplicatedVideos.OrderByDescending(v => v.AnalyzedAt).ToList()
                         : deduplicatedVideos.OrderBy(v => v.AnalyzedAt).ToList()
                 };
+
+                // Final safety net: keep broken-only/non-broken-only strict at response time.
+                // This guards against any future transform stage accidentally widening results.
+                if (isBroken.HasValue)
+                {
+                    sortedVideos = sortedVideos.Where(v => v.IsBroken == isBroken.Value).ToList();
+                }
+
+                // Calculate total after all transforms and final guard filters.
+                var total = sortedVideos.Count;
 
                 // Apply pagination after sorting
                 var videos = sortedVideos
@@ -2705,6 +2737,19 @@ namespace Optimarr.Controllers
                 }
                 
                 _logger.LogInformation("Video analysis completed for ID {Id}", id);
+                #region agent log
+                WriteDebugLog("H5", "Controllers/LibraryController.cs:RescanVideo:classificationInput", "Controller rescan classification input", new
+                {
+                    id,
+                    filePath = video.FilePath,
+                    videoInfo.VideoCodec,
+                    videoInfo.Container,
+                    videoInfo.Duration,
+                    videoInfo.Width,
+                    videoInfo.Height,
+                    videoInfo.FileSize
+                });
+                #endregion
                 
                 // Check if media information is valid (not broken)
                 bool isBroken = false;
@@ -2715,21 +2760,47 @@ namespace Optimarr.Controllers
                 {
                     isBroken = true;
                     brokenReason = "No video codec or container information found";
+                    _logger.LogInformation("DBG-H5: Broken reason selected (codec+container missing) for {FilePath}", video.FilePath);
                 }
-                else if (videoInfo.Width == 0 || videoInfo.Height == 0)
+                else if (string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                         videoInfo.Duration <= 0 &&
+                         videoInfo.Width == 0 &&
+                         videoInfo.Height == 0 &&
+                         videoInfo.AudioTracks.Count == 0)
                 {
                     isBroken = true;
-                    brokenReason = "Invalid video resolution (width or height is 0)";
+                    brokenReason = "Media metadata extraction failed (empty track data returned by analyzer)";
+                    _logger.LogInformation("DBG-H5: Broken reason selected (empty metadata extraction) for {FilePath}", video.FilePath);
                 }
                 else if (videoInfo.Duration <= 0)
                 {
-                    isBroken = true;
-                    brokenReason = "Invalid duration (duration is 0 or negative)";
+                    var hasCoreMetadata =
+                        !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                        !string.IsNullOrWhiteSpace(videoInfo.Container) &&
+                        videoInfo.FileSize > 0;
+                    if (!hasCoreMetadata)
+                    {
+                        isBroken = true;
+                        brokenReason = "Invalid duration (duration is 0 or negative)";
+                        _logger.LogInformation("DBG-H5: Broken reason selected (invalid duration) for {FilePath}", video.FilePath);
+                    }
                 }
                 else if (videoInfo.FileSize == 0)
                 {
                     isBroken = true;
                     brokenReason = "File size is 0 bytes";
+                }
+                else if (videoInfo.Width == 0 || videoInfo.Height == 0)
+                {
+                    var hasCoreMetadata =
+                        !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                        !string.IsNullOrWhiteSpace(videoInfo.Container);
+
+                    if (!hasCoreMetadata)
+                    {
+                        isBroken = true;
+                        brokenReason = "Invalid video resolution (width or height is 0)";
+                    }
                 }
                 
                 // Update the existing video analysis record
@@ -3101,20 +3172,43 @@ namespace Optimarr.Controllers
                             isBroken = true;
                             brokenReason = "No video codec or container information found";
                         }
-                        else if (videoInfo.Width == 0 || videoInfo.Height == 0)
+                        else if (string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                                 videoInfo.Duration <= 0 &&
+                                 videoInfo.Width == 0 &&
+                                 videoInfo.Height == 0 &&
+                                 videoInfo.AudioTracks.Count == 0)
                         {
                             isBroken = true;
-                            brokenReason = "Invalid video resolution (width or height is 0)";
+                            brokenReason = "Media metadata extraction failed (empty track data returned by analyzer)";
                         }
                         else if (videoInfo.Duration <= 0)
                         {
-                            isBroken = true;
-                            brokenReason = "Invalid duration (duration is 0 or negative)";
+                            var hasCoreMetadata =
+                                !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                                !string.IsNullOrWhiteSpace(videoInfo.Container) &&
+                                videoInfo.FileSize > 0;
+                            if (!hasCoreMetadata)
+                            {
+                                isBroken = true;
+                                brokenReason = "Invalid duration (duration is 0 or negative)";
+                            }
                         }
                         else if (videoInfo.FileSize == 0)
                         {
                             isBroken = true;
                             brokenReason = "File size is 0 bytes";
+                        }
+                        else if (videoInfo.Width == 0 || videoInfo.Height == 0)
+                        {
+                            var hasCoreMetadata =
+                                !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                                !string.IsNullOrWhiteSpace(videoInfo.Container);
+
+                            if (!hasCoreMetadata)
+                            {
+                                isBroken = true;
+                                brokenReason = "Invalid video resolution (width or height is 0)";
+                            }
                         }
 
                         // Update the existing video analysis record
@@ -3282,12 +3376,52 @@ namespace Optimarr.Controllers
                                 string brokenReason = string.Empty;
                                 
                                 // Check if still broken
-                                if (videoInfo == null || compatibilityResult == null ||
-                                    string.IsNullOrEmpty(videoInfo.VideoCodec) || string.IsNullOrEmpty(videoInfo.Container) ||
-                                    videoInfo.Width == 0 || videoInfo.Height == 0 || videoInfo.Duration <= 0)
+                                if (videoInfo == null || compatibilityResult == null)
                                 {
                                     isBroken = true;
                                     brokenReason = "Incomplete media information detected after analysis.";
+                                }
+                                else if (string.IsNullOrWhiteSpace(videoInfo.VideoCodec) && string.IsNullOrWhiteSpace(videoInfo.Container))
+                                {
+                                    isBroken = true;
+                                    brokenReason = "No video codec or container information found";
+                                }
+                                else if (string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                                         videoInfo.Duration <= 0 &&
+                                         videoInfo.Width == 0 &&
+                                         videoInfo.Height == 0 &&
+                                         videoInfo.AudioTracks.Count == 0)
+                                {
+                                    isBroken = true;
+                                    brokenReason = "Media metadata extraction failed (empty track data returned by analyzer)";
+                                }
+                                else if (videoInfo.Duration <= 0)
+                                {
+                                    var hasCoreMetadata =
+                                        !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                                        !string.IsNullOrWhiteSpace(videoInfo.Container) &&
+                                        videoInfo.FileSize > 0;
+                                    if (!hasCoreMetadata)
+                                    {
+                                        isBroken = true;
+                                        brokenReason = "Invalid duration (duration is 0 or negative)";
+                                    }
+                                }
+                                else if (videoInfo.FileSize == 0)
+                                {
+                                    isBroken = true;
+                                    brokenReason = "File size is 0 bytes";
+                                }
+                                else if (videoInfo.Width == 0 || videoInfo.Height == 0)
+                                {
+                                    var hasCoreMetadata =
+                                        !string.IsNullOrWhiteSpace(videoInfo.VideoCodec) &&
+                                        !string.IsNullOrWhiteSpace(videoInfo.Container);
+                                    if (!hasCoreMetadata)
+                                    {
+                                        isBroken = true;
+                                        brokenReason = "Invalid video resolution (width or height is 0)";
+                                    }
                                 }
                                 
                                 videoRecord.FileName = System.IO.Path.GetFileName(video.FilePath);
@@ -3757,6 +3891,48 @@ namespace Optimarr.Controllers
                 failed = request.VideoIds.Count - successCount,
                 results = results
             });
+        }
+
+        private static void WriteDebugLog(string hypothesisId, string location, string message, object data)
+        {
+            try
+            {
+                var payload = new
+                {
+                    sessionId = "3ebaec",
+                    runId = "pre-fix",
+                    hypothesisId,
+                    location,
+                    message,
+                    data,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                };
+                var json = System.Text.Json.JsonSerializer.Serialize(payload);
+                var endpoints = new[]
+                {
+                    "http://127.0.0.1:7699/ingest/76de9862-df1a-4420-bd96-f7a2beb1c576",
+                    "http://host.docker.internal:7699/ingest/76de9862-df1a-4420-bd96-f7a2beb1c576"
+                };
+                foreach (var endpoint in endpoints)
+                {
+                    try
+                    {
+                        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                        content.Headers.Add("X-Debug-Session-Id", "3ebaec");
+                        var response = DebugHttpClient.PostAsync(endpoint, content).GetAwaiter().GetResult();
+                        if (response.IsSuccessStatusCode)
+                        {
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch
+            {
+            }
         }
     }
 
