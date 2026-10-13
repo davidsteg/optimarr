@@ -48,7 +48,12 @@ pub async fn overview(State(state): State<AppState>) -> ApiResult<Json<Value>> {
     )
     .await?;
     let hdr = buckets(&state, "CASE WHEN hdr_type = '' THEN 'SDR' ELSE hdr_type END", "AND video_codec != ''").await?;
-    let audio = buckets(&state, "CASE WHEN instr(audio_codecs, ',') > 0 THEN substr(audio_codecs, 1, instr(audio_codecs, ',') - 1) ELSE audio_codecs END", "AND audio_codecs != ''").await?;
+    let audio = buckets(
+        &state,
+        "CASE WHEN instr(audio_codecs, ',') > 0 THEN substr(audio_codecs, 1, instr(audio_codecs, ',') - 1) ELSE audio_codecs END",
+        "AND audio_codecs != ''",
+    )
+    .await?;
 
     #[derive(serde::Serialize, sqlx::FromRow)]
     #[serde(rename_all = "camelCase")]
@@ -66,18 +71,16 @@ pub async fn overview(State(state): State<AppState>) -> ApiResult<Json<Value>> {
     .fetch_all(&state.pool)
     .await?;
 
-    let worst: Vec<crate::repo::MediaFile> = sqlx::query_as(
-        "SELECT * FROM media_files WHERE status = 'ok' ORDER BY (compat_score + quality_score) ASC, size DESC LIMIT 10",
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let worst: Vec<crate::repo::MediaFile> =
+        sqlx::query_as("SELECT * FROM media_files WHERE status = 'ok' ORDER BY (compat_score + quality_score) ASC, size DESC LIMIT 10")
+            .fetch_all(&state.pool)
+            .await?;
 
-    let (plays, transcodes): (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(SUM(play_method = 'Transcode'), 0) FROM playback_events WHERE started_at >= ?",
-    )
-    .bind((chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339())
-    .fetch_one(&state.pool)
-    .await?;
+    let (plays, transcodes): (i64, i64) =
+        sqlx::query_as("SELECT COUNT(*), COALESCE(SUM(play_method = 'Transcode'), 0) FROM playback_events WHERE started_at >= ?")
+            .bind((chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339())
+            .fetch_one(&state.pool)
+            .await?;
 
     let jobs = state.jobs.history(8).await?;
 

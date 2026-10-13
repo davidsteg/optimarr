@@ -63,11 +63,7 @@ async fn main() -> anyhow::Result<()> {
             .max_log_files(14)
             .build(&args.log_dir)?;
         let (nb, guard) = tracing_appender::non_blocking(appender);
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(fmt::layer())
-            .with(fmt::layer().with_ansi(false).with_writer(nb))
-            .init();
+        tracing_subscriber::registry().with(filter).with(fmt::layer()).with(fmt::layer().with_ansi(false).with_writer(nb)).init();
         Some(guard)
     };
 
@@ -79,35 +75,19 @@ async fn main() -> anyhow::Result<()> {
 
     let state = state::AppState::new(
         pool,
-        state::Config {
-            data_dir: args.data_dir.clone(),
-            api_key: args.api_key.clone().unwrap_or_default(),
-            version: env!("CARGO_PKG_VERSION"),
-        },
+        state::Config { data_dir: args.data_dir.clone(), api_key: args.api_key.clone().unwrap_or_default(), version: env!("CARGO_PKG_VERSION") },
     )
     .await?;
     background::spawn_all(state.clone());
 
-    let origins: Vec<_> = args
-        .cors_origins
-        .split(',')
-        .map(str::trim)
-        .filter(|o| !o.is_empty())
-        .filter_map(|o| o.parse().ok())
-        .collect();
+    let origins: Vec<_> = args.cors_origins.split(',').map(str::trim).filter(|o| !o.is_empty()).filter_map(|o| o.parse().ok()).collect();
     let app = api::router()
         .merge(web::router())
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth::middleware))
         .layer(CorsLayer::new().allow_origin(origins).allow_methods(tower_http::cors::Any).allow_headers(tower_http::cors::Any))
         .layer(tower_http::compression::CompressionLayer::new())
-        .layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::X_CONTENT_TYPE_OPTIONS,
-            axum::http::HeaderValue::from_static("nosniff"),
-        ))
-        .layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::X_FRAME_OPTIONS,
-            axum::http::HeaderValue::from_static("SAMEORIGIN"),
-        ))
+        .layer(SetResponseHeaderLayer::overriding(axum::http::header::X_CONTENT_TYPE_OPTIONS, axum::http::HeaderValue::from_static("nosniff")))
+        .layer(SetResponseHeaderLayer::overriding(axum::http::header::X_FRAME_OPTIONS, axum::http::HeaderValue::from_static("SAMEORIGIN")))
         .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024))
         .with_state(state);
 

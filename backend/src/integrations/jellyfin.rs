@@ -84,20 +84,14 @@ impl Client {
             .map(|a| a.iter().map(|c| c.as_str().unwrap_or("").to_string()).collect())
             .unwrap_or_default();
         let rows = v.get("results").and_then(Value::as_array).cloned().unwrap_or_default();
-        Ok(rows
-            .into_iter()
-            .filter_map(|r| r.as_array().cloned())
-            .map(|r| cols.iter().cloned().zip(r).collect())
-            .collect())
+        Ok(rows.into_iter().filter_map(|r| r.as_array().cloned()).map(|r| cols.iter().cloned().zip(r).collect()).collect())
     }
 
     /// Item id -> file path, in batches.
     async fn item_paths(&self, ids: &[String]) -> Result<HashMap<String, String>> {
         let mut out = HashMap::new();
         for chunk in ids.chunks(100) {
-            let v = self
-                .get(&format!("Items?Ids={}&Fields=Path&Recursive=true&EnableImages=false&EnableUserData=false", chunk.join(",")))
-                .await?;
+            let v = self.get(&format!("Items?Ids={}&Fields=Path&Recursive=true&EnableImages=false&EnableUserData=false", chunk.join(","))).await?;
             for item in v["Items"].as_array().into_iter().flatten() {
                 if let (Some(id), Some(path)) = (item["Id"].as_str(), item["Path"].as_str()) {
                     out.insert(id.to_string(), path.to_string());

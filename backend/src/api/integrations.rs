@@ -14,11 +14,7 @@ fn kind(k: &str) -> ApiResult<servarr::Kind> {
 }
 
 /// Test a connection; accepts unsaved settings from the form.
-pub async fn test_servarr(
-    State(state): State<AppState>,
-    Path(k): Path<String>,
-    body: Option<Json<ServarrSettings>>,
-) -> ApiResult<Json<Value>> {
+pub async fn test_servarr(State(state): State<AppState>, Path(k): Path<String>, body: Option<Json<ServarrSettings>>) -> ApiResult<Json<Value>> {
     let kind = kind(&k)?;
     let s = merged_servarr(&state, kind, body.map(|b| b.0)).await?;
     if s.base_url.is_empty() || s.api_key.is_empty() {

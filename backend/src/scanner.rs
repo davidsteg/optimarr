@@ -39,10 +39,7 @@ pub async fn start_library_scan(state: &AppState, library_id: i64, full: bool) -
         return Ok(j.id);
     }
     let lib = repo::get_library(&state.pool, library_id).await?.context("library not found")?;
-    let job = state
-        .jobs
-        .start("scan", &format!("{} {}", if full { "Full scan of" } else { "Scan" }, lib.name), Some(lib.id))
-        .await?;
+    let job = state.jobs.start("scan", &format!("{} {}", if full { "Full scan of" } else { "Scan" }, lib.name), Some(lib.id)).await?;
     let id = job.id;
     let st = state.clone();
     tokio::spawn(async move {
@@ -64,12 +61,8 @@ async fn scan_library(state: &AppState, job: &Arc<JobHandle>, root: &str, librar
     let discovered = tokio::task::spawn_blocking(move || files::discover(&rp)).await?;
 
     let existing: Vec<(i64, String, i64, i64, String)> =
-        sqlx::query_as("SELECT id, path, size, mtime, status FROM media_files WHERE library_id = ?")
-            .bind(library_id)
-            .fetch_all(&state.pool)
-            .await?;
-    let known: HashMap<&str, (i64, i64, &str)> =
-        existing.iter().map(|(_, p, s, m, st)| (p.as_str(), (*s, *m, st.as_str()))).collect();
+        sqlx::query_as("SELECT id, path, size, mtime, status FROM media_files WHERE library_id = ?").bind(library_id).fetch_all(&state.pool).await?;
+    let known: HashMap<&str, (i64, i64, &str)> = existing.iter().map(|(_, p, s, m, st)| (p.as_str(), (*s, *m, st.as_str()))).collect();
 
     let mut work = Vec::new();
     let mut seen = HashSet::with_capacity(discovered.len());
@@ -87,11 +80,7 @@ async fn scan_library(state: &AppState, job: &Arc<JobHandle>, root: &str, librar
     }
 
     // Files that disappeared are flagged, not deleted, so a temporarily missing mount can't wipe data.
-    let missing: Vec<i64> = existing
-        .iter()
-        .filter(|(_, p, _, _, st)| !seen.contains(p) && st != "missing")
-        .map(|(id, ..)| *id)
-        .collect();
+    let missing: Vec<i64> = existing.iter().filter(|(_, p, _, _, st)| !seen.contains(p) && st != "missing").map(|(id, ..)| *id).collect();
     if !missing.is_empty() {
         let mut tx = state.pool.begin().await?;
         for id in &missing {
@@ -118,11 +107,7 @@ async fn scan_library(state: &AppState, job: &Arc<JobHandle>, root: &str, librar
     ));
     analyze_items(state, job, work).await?;
 
-    sqlx::query("UPDATE libraries SET last_scanned_at = ? WHERE id = ?")
-        .bind(now())
-        .bind(library_id)
-        .execute(&state.pool)
-        .await?;
+    sqlx::query("UPDATE libraries SET last_scanned_at = ? WHERE id = ?").bind(now()).bind(library_id).execute(&state.pool).await?;
     Ok(())
 }
 
@@ -260,10 +245,8 @@ pub async fn start_rescan(state: &AppState, ids: Vec<i64>, title: &str) -> Resul
         let res = async {
             let mut items = Vec::new();
             for chunk in ids.chunks(500) {
-                let sql = format!(
-                    "SELECT id, path, library_id FROM media_files WHERE id IN ({})",
-                    chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",")
-                );
+                let sql =
+                    format!("SELECT id, path, library_id FROM media_files WHERE id IN ({})", chunk.iter().map(|_| "?").collect::<Vec<_>>().join(","));
                 let mut q = sqlx::query_as::<_, (i64, String, Option<i64>)>(&sql);
                 for id in chunk {
                     q = q.bind(id);
@@ -337,10 +320,7 @@ pub async fn rescore_all(state: &AppState) -> Result<i64> {
             let mut last_id = 0i64;
             loop {
                 let rows: Vec<repo::MediaFile> =
-                    sqlx::query_as("SELECT * FROM media_files WHERE id > ? ORDER BY id LIMIT 500")
-                        .bind(last_id)
-                        .fetch_all(&st.pool)
-                        .await?;
+                    sqlx::query_as("SELECT * FROM media_files WHERE id > ? ORDER BY id LIMIT 500").bind(last_id).fetch_all(&st.pool).await?;
                 if rows.is_empty() || job.is_cancelled() {
                     break;
                 }

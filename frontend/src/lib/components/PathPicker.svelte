@@ -33,12 +33,17 @@
 
 <div class="picker">
 	<div class="row bar">
-		<button class="btn icon sm" disabled={!listing?.parent} onclick={() => listing?.parent && load(listing.parent)} aria-label="Up"><Icon name="up" /></button>
+		<button type="button" class="btn icon sm" disabled={!listing?.parent} onclick={() => listing?.parent && load(listing.parent)} aria-label="Up"><Icon name="up" /></button>
 		<input
 			type="text"
 			class="grow mono"
 			value={listing?.path ?? value}
-			onkeydown={(e) => e.key === 'Enter' && load((e.target as HTMLInputElement).value)}
+			onkeydown={(e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					load((e.target as HTMLInputElement).value);
+				}
+			}}
 		/>
 	</div>
 	<div class="list">
@@ -50,7 +55,7 @@
 			<p class="faint small">No sub-folders.</p>
 		{:else if listing}
 			{#each listing.directories as d (d.path)}
-				<button class="entry" ondblclick={() => onpick?.(d.path)} onclick={() => load(d.path)}>
+				<button type="button" class="entry" ondblclick={() => onpick?.(d.path)} onclick={() => load(d.path)}>
 					<Icon name="folder" size={15} /><span class="ellipsis">{d.name}</span>
 				</button>
 			{/each}

@@ -32,8 +32,11 @@ pub struct JobSnapshot {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
-    Job { job: JobSnapshot },
+    Job {
+        job: JobSnapshot,
+    },
     /// Media rows changed; clients should refresh lists/dashboards.
     MediaChanged,
     LibrariesChanged,
@@ -128,12 +131,7 @@ impl Jobs {
 
     /// Returns the running job of the same kind (and library) if there is one.
     pub fn find_running(&self, kind: &str, library_id: Option<i64>) -> Option<Arc<JobHandle>> {
-        self.running
-            .lock()
-            .unwrap()
-            .values()
-            .find(|j| j.kind == kind && (library_id.is_none() || j.library_id == library_id))
-            .cloned()
+        self.running.lock().unwrap().values().find(|j| j.kind == kind && (library_id.is_none() || j.library_id == library_id)).cloned()
     }
 
     pub fn running(&self) -> Vec<JobSnapshot> {
@@ -144,15 +142,14 @@ impl Jobs {
 
     pub async fn start(&self, kind: &str, title: &str, library_id: Option<i64>) -> anyhow::Result<Arc<JobHandle>> {
         let started_at = now();
-        let id: i64 = sqlx::query_scalar(
-            "INSERT INTO jobs (kind, title, library_id, status, started_at) VALUES (?, ?, ?, 'running', ?) RETURNING id",
-        )
-        .bind(kind)
-        .bind(title)
-        .bind(library_id)
-        .bind(&started_at)
-        .fetch_one(&self.pool)
-        .await?;
+        let id: i64 =
+            sqlx::query_scalar("INSERT INTO jobs (kind, title, library_id, status, started_at) VALUES (?, ?, ?, 'running', ?) RETURNING id")
+                .bind(kind)
+                .bind(title)
+                .bind(library_id)
+                .bind(&started_at)
+                .fetch_one(&self.pool)
+                .await?;
         let handle = Arc::new(JobHandle {
             id,
             kind: kind.into(),
@@ -227,8 +224,7 @@ impl Jobs {
     }
 
     pub async fn history(&self, limit: i64) -> sqlx::Result<Vec<JobSnapshot>> {
-        let mut rows: Vec<JobSnapshot> =
-            sqlx::query_as("SELECT * FROM jobs ORDER BY id DESC LIMIT ?").bind(limit).fetch_all(&self.pool).await?;
+        let mut rows: Vec<JobSnapshot> = sqlx::query_as("SELECT * FROM jobs ORDER BY id DESC LIMIT ?").bind(limit).fetch_all(&self.pool).await?;
         let live = self.running.lock().unwrap();
         for r in rows.iter_mut() {
             if let Some(h) = live.get(&r.id) {
@@ -254,7 +250,7 @@ impl Jobs {
                 for s in &snaps {
                     this.emit(Event::Job { job: s.clone() });
                 }
-                if n % 6 == 0 {
+                if n.is_multiple_of(6) {
                     for s in snaps {
                         let _ = sqlx::query("UPDATE jobs SET total=?, processed=?, failed=?, skipped=?, current_item=? WHERE id=?")
                             .bind(s.total)

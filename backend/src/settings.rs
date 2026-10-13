@@ -92,13 +92,7 @@ impl Default for CompatibilityProfile {
                 ("ALAC", true),
                 ("PCM", false),
             ]),
-            containers: map(&[
-                ("MP4", true),
-                ("MKV", false),
-                ("WebM", true),
-                ("TS", false),
-                ("AVI", false),
-            ]),
+            containers: map(&[("MP4", true), ("MKV", false), ("WebM", true), ("TS", false), ("AVI", false)]),
             subtitle_formats: map(&[
                 ("SRT", true),
                 ("VTT", true),
@@ -200,13 +194,7 @@ pub struct JellyfinSettings {
 
 impl Default for JellyfinSettings {
     fn default() -> Self {
-        Self {
-            enabled: false,
-            base_url: String::new(),
-            api_key: String::new(),
-            path_mappings: Vec::new(),
-            sync_interval_minutes: 60,
-        }
+        Self { enabled: false, base_url: String::new(), api_key: String::new(), path_mappings: Vec::new(), sync_interval_minutes: 60 }
     }
 }
 
@@ -228,13 +216,7 @@ pub struct GeneralSettings {
 
 impl Default for GeneralSettings {
     fn default() -> Self {
-        Self {
-            scan_concurrency: 0,
-            watch_libraries: true,
-            processing_rescan_hours: 24,
-            probe_backend: "auto".into(),
-            periodic_scan_hours: 12,
-        }
+        Self { scan_concurrency: 0, watch_libraries: true, processing_rescan_hours: 24, probe_backend: "auto".into(), periodic_scan_hours: 12 }
     }
 }
 
@@ -271,10 +253,7 @@ impl SettingsDoc for RadarrSettings {
 }
 
 pub async fn load<T: SettingsDoc>(pool: &SqlitePool) -> anyhow::Result<T> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?")
-        .bind(T::KEY)
-        .fetch_optional(pool)
-        .await?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?").bind(T::KEY).fetch_optional(pool).await?;
     Ok(match row {
         Some((json,)) => serde_json::from_str(&json).unwrap_or_else(|e| {
             tracing::warn!(key = T::KEY, error = %e, "invalid settings document, using defaults");
@@ -298,10 +277,7 @@ pub async fn save<T: SettingsDoc>(pool: &SqlitePool, value: &T) -> anyhow::Resul
 }
 
 pub async fn exists(pool: &SqlitePool, key: &str) -> anyhow::Result<bool> {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM settings WHERE key = ?")
-        .bind(key)
-        .fetch_optional(pool)
-        .await?;
+    let row: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM settings WHERE key = ?").bind(key).fetch_optional(pool).await?;
     Ok(row.is_some())
 }
 
@@ -315,10 +291,7 @@ pub fn map_path(mappings: &[PathMapping], remote_path: &str) -> String {
         if remote.is_empty() {
             continue;
         }
-        let matches = norm == remote
-            || norm
-                .strip_prefix(remote)
-                .is_some_and(|rest| rest.starts_with('/'));
+        let matches = norm == remote || norm.strip_prefix(remote).is_some_and(|rest| rest.starts_with('/'));
         if matches && best.is_none_or(|b| b.remote.len() < m.remote.len()) {
             best = Some(m);
         }
@@ -335,10 +308,7 @@ pub fn map_path(mappings: &[PathMapping], remote_path: &str) -> String {
 
 /// Inverse of [`map_path`]: translate a local path to the remote view.
 pub fn unmap_path(mappings: &[PathMapping], local_path: &str) -> String {
-    let swapped: Vec<PathMapping> = mappings
-        .iter()
-        .map(|m| PathMapping { remote: m.local.clone(), local: m.remote.clone() })
-        .collect();
+    let swapped: Vec<PathMapping> = mappings.iter().map(|m| PathMapping { remote: m.local.clone(), local: m.remote.clone() }).collect();
     map_path(&swapped, local_path)
 }
 
@@ -348,10 +318,7 @@ mod tests {
 
     #[test]
     fn maps_longest_prefix() {
-        let m = vec![
-            PathMapping { remote: "/data".into(), local: "/media".into() },
-            PathMapping { remote: "/data/tv".into(), local: "/tv".into() },
-        ];
+        let m = vec![PathMapping { remote: "/data".into(), local: "/media".into() }, PathMapping { remote: "/data/tv".into(), local: "/tv".into() }];
         assert_eq!(map_path(&m, "/data/tv/Show/S01E01.mkv"), "/tv/Show/S01E01.mkv");
         assert_eq!(map_path(&m, "/data/movies/a.mkv"), "/media/movies/a.mkv");
         assert_eq!(map_path(&m, "/database/a.mkv"), "/database/a.mkv");

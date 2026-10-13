@@ -47,15 +47,7 @@ impl AppState {
             .connect_timeout(std::time::Duration::from_secs(10))
             .user_agent(concat!("Optimarr/", env!("CARGO_PKG_VERSION")))
             .build()?;
-        Ok(Self {
-            pool,
-            jobs,
-            probers,
-            http,
-            config: Arc::new(config),
-            probe_slots: Arc::new(Semaphore::new(slots)),
-            started_at: chrono::Utc::now(),
-        })
+        Ok(Self { pool, jobs, probers, http, config: Arc::new(config), probe_slots: Arc::new(Semaphore::new(slots)), started_at: chrono::Utc::now() })
     }
 
     pub async fn probe_backends(&self) -> Vec<Backend> {

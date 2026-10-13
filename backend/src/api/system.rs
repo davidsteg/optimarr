@@ -32,14 +32,11 @@ pub async fn auth_status(State(state): State<AppState>, req: axum::extract::Requ
 pub async fn status(State(state): State<AppState>) -> ApiResult<Json<Value>> {
     let db_path = state.config.data_dir.join(crate::DB_FILE);
     let db_size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
-    let (media, libraries, playback): (i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM media_files), (SELECT COUNT(*) FROM libraries), (SELECT COUNT(*) FROM playback_events)",
-    )
-    .fetch_one(&state.pool)
-    .await?;
-    let legacy: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'legacy_import'")
-        .fetch_optional(&state.pool)
-        .await?;
+    let (media, libraries, playback): (i64, i64, i64) =
+        sqlx::query_as("SELECT (SELECT COUNT(*) FROM media_files), (SELECT COUNT(*) FROM libraries), (SELECT COUNT(*) FROM playback_events)")
+            .fetch_one(&state.pool)
+            .await?;
+    let legacy: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'legacy_import'").fetch_optional(&state.pool).await?;
     Ok(Json(json!({
         "version": state.config.version,
         "startedAt": state.started_at,
@@ -110,7 +107,7 @@ pub async fn browse(Query(q): Query<BrowseQuery>) -> ApiResult<Json<Value>> {
             .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
             .map(|e| DirEntry { name: e.file_name().to_string_lossy().into_owned(), path: e.path().to_string_lossy().into_owned() })
             .collect();
-        v.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        v.sort_by_key(|a| a.name.to_lowercase());
         Ok(v)
     })
     .await?

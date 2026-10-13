@@ -18,10 +18,7 @@ fn is_text_sub(format: &str) -> bool {
 pub fn ffmpeg_command_for(info: &MediaInfo, p: &CompatibilityProfile, issues: &[Issue], input: &str) -> Option<String> {
     let fixable = issues.iter().any(|i| {
         i.area == IssueArea::Compatibility
-            && matches!(
-                i.code.as_str(),
-                "video_codec" | "bit_depth" | "codec_tag" | "audio_codec" | "container" | "subtitle_format" | "fast_start"
-            )
+            && matches!(i.code.as_str(), "video_codec" | "bit_depth" | "codec_tag" | "audio_codec" | "container" | "subtitle_format" | "fast_start")
     });
     let video = info.video.as_ref()?;
     if !fixable {
@@ -29,7 +26,13 @@ pub fn ffmpeg_command_for(info: &MediaInfo, p: &CompatibilityProfile, issues: &[
     }
 
     let to_mp4 = container_supported(p, "MP4");
-    let ext = if to_mp4 { "mp4" } else if container_supported(p, "MKV") { "mkv" } else { "mp4" };
+    let ext = if to_mp4 {
+        "mp4"
+    } else if container_supported(p, "MKV") {
+        "mkv"
+    } else {
+        "mp4"
+    };
     let stem = input.rsplit_once('.').map(|(s, _)| s).unwrap_or(input);
     let output = format!("{stem}.optimized.{ext}");
 
@@ -37,13 +40,10 @@ pub fn ffmpeg_command_for(info: &MediaInfo, p: &CompatibilityProfile, issues: &[
     args.extend(["-map".into(), "0:v:0".into(), "-map".into(), "0:a?".into()]);
 
     // Video
-    let reencode_video = !video_codec_supported(p, &video.codec, video.bit_depth)
-        || !p.bit_depths.get(&video.bit_depth.to_string()).copied().unwrap_or(false);
+    let reencode_video =
+        !video_codec_supported(p, &video.codec, video.bit_depth) || !p.bit_depths.get(&video.bit_depth.to_string()).copied().unwrap_or(false);
     if reencode_video {
-        args.extend(
-            ["-c:v", "libx264", "-preset", "slow", "-crf", "19", "-pix_fmt", "yuv420p", "-profile:v", "high"]
-                .map(String::from),
-        );
+        args.extend(["-c:v", "libx264", "-preset", "slow", "-crf", "19", "-pix_fmt", "yuv420p", "-profile:v", "high"].map(String::from));
         if video.hdr_type.is_some() {
             // Tone-map HDR to SDR so colours are not washed out.
             args.extend([
@@ -73,14 +73,7 @@ pub fn ffmpeg_command_for(info: &MediaInfo, p: &CompatibilityProfile, issues: &[
                 2 => 192,
                 _ => 384,
             };
-            args.extend([
-                format!("-c:a:{i}"),
-                "aac".into(),
-                format!("-ac:a:{i}"),
-                ch.to_string(),
-                format!("-b:a:{i}"),
-                format!("{kbps}k"),
-            ]);
+            args.extend([format!("-c:a:{i}"), "aac".into(), format!("-ac:a:{i}"), ch.to_string(), format!("-b:a:{i}"), format!("{kbps}k")]);
         }
     }
 
