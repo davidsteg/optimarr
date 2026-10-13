@@ -16,6 +16,9 @@ fn validate(t: &Target) -> Result<(), String> {
     if !(t.url.starts_with("http://") || t.url.starts_with("https://")) {
         return Err(format!("{}: the URL must start with http:// or https://", if t.name.is_empty() { &t.kind } else { &t.name }));
     }
+    if t.kind == "ntfy" {
+        notify::ntfy_parts(&t.url).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

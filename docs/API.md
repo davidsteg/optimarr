@@ -79,6 +79,14 @@ is the number of points deducted; `fix` is present when there is a concrete reme
 | GET | `/api/agent/transcodes` | Files Jellyfin transcoded most |
 | POST | `/api/agent/files/{id}/rescan` | Re-analyze a file now |
 | POST | `/api/agent/files/{id}/redownload` | Delete the file in Sonarr/Radarr and search for a replacement |
+| GET | `/api/agent/devices` | Direct play / remux / transcode counts per device profile |
+| GET | `/api/agent/devices/{id}/transcodes` | Files a device would transcode, with reasons |
+| GET | `/api/agent/savings` | Space saved by re-encoding to HEVC or AV1 |
+| GET | `/api/agent/upgrades` | Low-quality files Sonarr/Radarr could upgrade |
+| POST | `/api/agent/files/{id}/upgrade` | Search for a better release (keeps the file) |
+| POST | `/api/agent/files/{id}/fix` | Queue the suggested ffmpeg fix |
+| GET | `/api/agent/fixes` | The fix queue |
+| GET | `/api/agent/notifications` | Recent notifications |
 
 ### GET /api/agent/overview
 
@@ -240,6 +248,131 @@ the user before calling this.
 On failure `success` is `false` and `message` says why, for example
 `"Not managed by Sonarr or Radarr (run a match first)"` or `"Sonarr is not configured"`.
 
+### GET /api/agent/devices
+
+What each enabled device profile (Settings → Devices) would do with the library.
+
+```json
+{
+  "summary": "Living room TV: 1102 direct play, 98 remux, 50 transcode; Browser: 610 direct play, 420 remux, 220 transcode.",
+  "devices": [
+    {
+      "id": 1,
+      "name": "Living room TV",
+      "directPlay": 1102,
+      "directStream": 98,
+      "transcode": 50,
+      "transcodeSizeBytes": 310000000000,
+      "topReasons": [{ "reason": "DTS audio", "count": 31 }, { "reason": "HDR10 needs tone mapping", "count": 12 }]
+    }
+  ]
+}
+```
+
+`directStream` means the container is remuxed on the fly (cheap); `transcode` means video or audio
+is re-encoded. Files with status `ok` are counted.
+
+### GET /api/agent/devices/{id}/transcodes
+
+Files that would be transcoded on one device, most reasons first. `limit` 1 to 200, default 20.
+
+```json
+{ "total": 50, "files": [{ "file": { /* file brief */ }, "reasons": ["H.265 10-bit video", "DTS audio"] }] }
+```
+
+### GET /api/agent/savings
+
+Estimated space saved by re-encoding the video to `target=hevc` (default) or `target=av1`. Files
+that are already efficient or would save under 15% are left out.
+
+```json
+{
+  "target": "hevc",
+  "summary": "Re-encoding 412 files to H.265 would save about 3.1 TB (58% of 5.4 TB).",
+  "files": 412,
+  "currentBytes": 5400000000000,
+  "savingsBytes": 3100000000000,
+  "byCodec": [{ "codec": "H.264", "files": 380, "savingsBytes": 2900000000000 }],
+  "top": [
+    {
+      "file": { /* file brief */ },
+      "estimate": { "target": "hevc", "currentSize": 30000000000, "estimatedSize": 9000000000, "savings": 21000000000, "targetVideoBitrate": 3480000 }
+    }
+  ]
+}
+```
+
+The estimate assumes visually transparent settings for the file's resolution and frame rate and
+keeps audio as is. It is a guide, not a promise.
+
+### GET /api/agent/upgrades
+
+Files linked to Sonarr or Radarr whose quality score is at or below `maxScore` (default from
+Settings → Fixes & upgrades), worst first, skipping files searched within the cooldown.
+`limit` 1 to 100, default 20.
+
+```json
+{ "summary": "37 files managed by Sonarr/Radarr have a quality score of 60 or lower and were not searched in the last 14 days.", "total": 37, "files": [ /* file briefs */ ] }
+```
+
+### POST /api/agent/files/{id}/upgrade
+
+Asks Sonarr or Radarr to search for a better release. **The current file is kept**; they only grab
+a release their quality profile ranks higher.
+
+```json
+{ "id": 812, "title": "The Expanse S02E05", "success": true, "message": "Search started in Sonarr" }
+```
+
+### POST /api/agent/files/{id}/fix
+
+Queues the suggested ffmpeg fix. The fix worker (Settings → Fixes & upgrades, off by default)
+replaces the file, keeping the original as `.orig` unless configured otherwise, then re-analyzes it.
+Returns `400` when there is nothing ffmpeg can fix or a fix is already queued.
+
+```json
+{
+  "fixId": 14,
+  "status": "queued",
+  "command": "ffmpeg -hide_banner -i '/tv/…/S02E05.mkv' -map 0:v:0 -map 0:a? -c:v copy -tag:v hvc1 -c:a:0 aac … '/tv/…/S02E05.optimized.mp4'",
+  "workerEnabled": true,
+  "summary": "Queued; the fix worker will run it next."
+}
+```
+
+### GET /api/agent/fixes
+
+The fix queue, running and queued first. Optional `status` (`queued`, `running`, `done`, `failed`,
+`cancelled`) and `limit` (default 20).
+
+```json
+{ "fixes": [{ "id": 14, "fileId": 812, "path": "/tv/…/S02E05.mkv", "status": "done", "progress": 1.0, "error": null, "sizeBefore": 2910000000, "sizeAfter": 2840000000, "finishedAt": "2026-10-13T21:40:02Z" }] }
+```
+
+### GET /api/agent/notifications
+
+Recent notifications Optimarr sent (new problem files, finished fixes, upgrade searches), newest
+first. Useful for "what changed since I last looked". `limit` default 20.
+
+```json
+{ "notifications": [{ "event": "new_problems", "title": "2 new file(s) with problems", "message": "• Movie (2024): compatibility poor, quality good\n• …", "sentAt": "2026-10-13T21:30:00Z" }] }
+```
+
+`event` is `new_problems`, `fix_done`, `fix_failed` or `upgrades`. Only notifications sent while at
+least one target is configured are recorded.
+
+### Reports include
+
+Each full report (`/api/agent/files/{id}`, `/api/agent/lookup`, rescan) also carries:
+
+- `devices`: per device `{ "id", "name", "outcome": "directPlay" | "directStream" | "transcode", "reasons", "subtitleNote" }`.
+- `savings`: the HEVC estimate for this file, or `null`.
+- `fix`: the latest fix-queue entry `{ "id", "status", "progress", "error", "finishedAt" }`, or `null`.
+- `upgradeRequestedAt`: when an upgrade search was last requested, or `null`.
+
+Language issues (`missing_audio_language`, `missing_subtitle_language`, `image_subtitles`) appear in
+`issues` when preferred languages are set under Settings → Quality.
+
 ## Wrapping it in an MCP server
 
 Each endpoint maps onto one tool. A suggested set:
@@ -253,6 +386,14 @@ Each endpoint maps onto one tool. A suggested set:
 | `most_transcoded` | `GET /api/agent/transcodes` |
 | `rescan_file` | `POST /api/agent/files/{id}/rescan` |
 | `redownload_file` | `POST /api/agent/files/{id}/redownload` (mark as destructive) |
+| `device_overview` | `GET /api/agent/devices` |
+| `device_transcodes` | `GET /api/agent/devices/{id}/transcodes` |
+| `space_savings` | `GET /api/agent/savings` |
+| `upgrade_candidates` | `GET /api/agent/upgrades` |
+| `search_upgrade` | `POST /api/agent/files/{id}/upgrade` |
+| `queue_fix` | `POST /api/agent/files/{id}/fix` (changes files on disk when the worker is on) |
+| `fix_queue` | `GET /api/agent/fixes` |
+| `recent_notifications` | `GET /api/agent/notifications` |
 
 Return the `summary` field (or the briefs' titles and verdicts) as the tool's text, and the full
 JSON as structured content.

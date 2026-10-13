@@ -9,6 +9,7 @@ class Live {
 	/** Bumped when media rows change; pages re-fetch when it moves. */
 	mediaVersion = $state(0);
 	librariesVersion = $state(0);
+	fixesVersion = $state(0);
 
 	private source: EventSource | null = null;
 	private retry: ReturnType<typeof setTimeout> | null = null;
@@ -50,6 +51,7 @@ class Live {
 			if (ev.type === 'job') this.handleJob(ev.job as Job);
 			else if (ev.type === 'mediaChanged') this.bump('media');
 			else if (ev.type === 'librariesChanged') this.bump('libraries');
+			else if (ev.type === 'fixesChanged') this.fixesVersion++;
 		};
 	}
 

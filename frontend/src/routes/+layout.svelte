@@ -21,6 +21,7 @@
 		{ href: '/', label: 'Dashboard', icon: 'dashboard' },
 		{ href: '/media', label: 'Media', icon: 'film' },
 		{ href: '/libraries', label: 'Libraries', icon: 'folder' },
+		{ href: '/improve', label: 'Improve', icon: 'wrench' },
 		{ href: '/playback', label: 'Playback', icon: 'play' },
 		{ href: '/activity', label: 'Activity', icon: 'activity' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' }

@@ -69,7 +69,10 @@ const ISSUE_LABELS: Record<string, string> = {
 	sdr_4k: '4K without HDR',
 	stereo_only: 'Stereo only',
 	low_audio_bitrate: 'Low audio bitrate',
-	no_audio: 'No audio'
+	no_audio: 'No audio',
+	missing_audio_language: 'Audio language',
+	missing_subtitle_language: 'Subtitle language',
+	image_subtitles: 'Image subtitles'
 };
 
 export function issueLabel(code: string): string {

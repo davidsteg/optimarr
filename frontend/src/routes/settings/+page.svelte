@@ -7,6 +7,8 @@
 	import { toasts } from '$lib/toast.svelte';
 	import type { PathMapping } from '$lib/types';
 	import CopyBlock from '$lib/components/CopyBlock.svelte';
+	import DeviceSettings from '$lib/components/DeviceSettings.svelte';
+	import NotificationSettings from '$lib/components/NotificationSettings.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import MappingsEditor from '$lib/components/MappingsEditor.svelte';
 	import Switch from '$lib/components/Switch.svelte';
@@ -38,7 +40,24 @@
 		penaltyLowAudioBitrate: number;
 		penaltySdr4k: number;
 		minBitsPerPixel: number;
+		preferredAudioLanguages: string[];
+		preferredSubtitleLanguages: string[];
+		penaltyMissingAudioLanguage: number;
+		penaltyMissingSubtitleLanguage: number;
+		penaltyImageSubtitles: number;
 		thresholds: { excellent: number; good: number; fair: number };
+	}
+	interface FixSettings {
+		enabled: boolean;
+		replaceOriginal: boolean;
+		keepOriginal: boolean;
+	}
+	interface UpgradeSettings {
+		maxQualityScore: number;
+		cooldownDays: number;
+		autoEnabled: boolean;
+		autoIntervalHours: number;
+		autoBatchSize: number;
 	}
 	interface Servarr {
 		enabled: boolean;
@@ -77,6 +96,9 @@
 		{ id: 'sonarr', label: 'Sonarr' },
 		{ id: 'radarr', label: 'Radarr' },
 		{ id: 'jellyfin', label: 'Jellyfin' },
+		{ id: 'devices', label: 'Devices' },
+		{ id: 'fixes', label: 'Fixes & upgrades' },
+		{ id: 'notifications', label: 'Notifications' },
 		{ id: 'security', label: 'Security' },
 		{ id: 'about', label: 'About' }
 	] as const;
@@ -90,6 +112,10 @@
 	let jellyfin = $state<Jellyfin | null>(null);
 	let security = $state<Security | null>(null);
 	let status = $state<Status | null>(null);
+	let fixSettings = $state<FixSettings | null>(null);
+	let upgradeSettings = $state<UpgradeSettings | null>(null);
+	let audioLangs = $state('');
+	let subLangs = $state('');
 	let saving = $state(false);
 	let testResult = $state<{ ok: boolean; text: string } | null>(null);
 	let showKey = $state(false);
@@ -120,6 +146,12 @@
 					break;
 				case 'quality':
 					quality = await api.get('/settings/quality');
+					audioLangs = quality?.preferredAudioLanguages.join(', ') ?? '';
+					subLangs = quality?.preferredSubtitleLanguages.join(', ') ?? '';
+					break;
+				case 'fixes':
+					fixSettings = await api.get('/settings/fixes');
+					upgradeSettings = await api.get('/settings/upgrades');
 					break;
 				case 'sonarr':
 				case 'radarr': {
@@ -374,7 +406,8 @@
 					class="stack"
 					onsubmit={(e) => {
 						e.preventDefault();
-						save('/settings/quality', q);
+						const split = (v: string) => v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+						save('/settings/quality', { ...q, preferredAudioLanguages: split(audioLangs), preferredSubtitleLanguages: split(subLangs) });
 					}}
 				>
 					<div class="card card-pad stack">
@@ -389,6 +422,15 @@
 							{#each qualityFields as f (f.key)}
 								<label class="field">{f.label}<input type="number" min="0" step={f.step ?? 1} bind:value={q[f.key] as number} /></label>
 							{/each}
+						</div>
+						<h2>Languages</h2>
+						<p class="muted small" style="margin:0">Flag files without audio or subtitles in your languages, and subtitles that only exist as images. Use codes or names, separated by commas (en, de, French). Leave empty to skip the check.</p>
+						<div class="fields">
+							<label class="field">Audio languages<input type="text" bind:value={audioLangs} placeholder="en, de" /></label>
+							<label class="field">Subtitle languages<input type="text" bind:value={subLangs} placeholder="en" /></label>
+							<label class="field">Missing audio language<input type="number" min="0" bind:value={q.penaltyMissingAudioLanguage} /></label>
+							<label class="field">Missing subtitle language<input type="number" min="0" bind:value={q.penaltyMissingSubtitleLanguage} /></label>
+							<label class="field">Image-only subtitles<input type="number" min="0" bind:value={q.penaltyImageSubtitles} /></label>
 						</div>
 						<h2>Verdicts</h2>
 						<div class="fields">
@@ -477,6 +519,57 @@
 						<button class="btn primary" disabled={saving}>Save</button>
 						<button type="button" class="btn" onclick={testJellyfin}><Icon name="check" size={15} />Test</button>
 					</div>
+				</form>
+			{/if}
+		{:else if tab === 'devices'}
+			<DeviceSettings />
+		{:else if tab === 'notifications'}
+			<NotificationSettings />
+		{:else if tab === 'fixes'}
+			{#if fixSettings && upgradeSettings}
+				{@const fs = fixSettings}
+				{@const us = upgradeSettings}
+				<form
+					class="card card-pad stack"
+					onsubmit={(e) => {
+						e.preventDefault();
+						save('/settings/fixes', fs);
+					}}
+				>
+					<div>
+						<h2>Fix queue</h2>
+						<p class="muted small" style="margin:4px 0 0">Runs the suggested ffmpeg command for queued files, one at a time. Your media folders must be mounted writable (remove <code>:ro</code>).</p>
+					</div>
+					<Switch bind:checked={fs.enabled} label="Run queued fixes" />
+					<Switch bind:checked={fs.replaceOriginal} label="Replace the original" hint="Otherwise the fixed file is saved next to it as name.optimized.mp4" />
+					{#if fs.replaceOriginal}
+						<Switch bind:checked={fs.keepOriginal} label="Keep the original as .orig" hint="Safer, but uses double the space until you delete the .orig files" />
+					{/if}
+					<div><button class="btn primary" disabled={saving}>Save</button></div>
+				</form>
+				<form
+					class="card card-pad stack"
+					onsubmit={(e) => {
+						e.preventDefault();
+						save('/settings/upgrades', us);
+					}}
+				>
+					<div>
+						<h2>Upgrade finder</h2>
+						<p class="muted small" style="margin:4px 0 0">Asks Sonarr or Radarr to search for a better release of low-quality files. The current file is kept, and only a release their quality profile ranks higher is grabbed.</p>
+					</div>
+					<div class="fields">
+						<label class="field">Quality score at or below<input type="number" min="0" max="100" bind:value={us.maxQualityScore} /></label>
+						<label class="field">Don't search a file again for (days)<input type="number" min="0" bind:value={us.cooldownDays} /></label>
+					</div>
+					<Switch bind:checked={us.autoEnabled} label="Search automatically" hint="Searches the worst candidates on a schedule" />
+					{#if us.autoEnabled}
+						<div class="fields">
+							<label class="field">Every (hours)<input type="number" min="1" bind:value={us.autoIntervalHours} /></label>
+							<label class="field">Files per run<input type="number" min="1" max="100" bind:value={us.autoBatchSize} /></label>
+						</div>
+					{/if}
+					<div><button class="btn primary" disabled={saving}>Save</button></div>
 				</form>
 			{/if}
 		{:else if tab === 'security'}

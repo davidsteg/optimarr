@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import { ago, bitrate, bytes, dateTime, duration, issueLabel, titleCase, verdictTone } from '$lib/format';
+	import { live } from '$lib/live.svelte';
 	import { toasts } from '$lib/toast.svelte';
 	import type { Issue, MediaDetail } from '$lib/types';
 	import Badge from './Badge.svelte';
@@ -63,6 +64,46 @@
 			busy = '';
 		}
 	}
+
+	async function queueFix() {
+		if (!detail) return;
+		busy = 'fix';
+		try {
+			const r = await api.post<{ queued: number; results: { queued: boolean; message?: string }[] }>('/fixes', { ids: [detail.id] });
+			if (r.queued) toasts.success('Fix queued');
+			else toasts.error(r.results[0]?.message ?? 'Could not queue the fix');
+			await load(detail.id);
+		} catch (e) {
+			toasts.error(e);
+		} finally {
+			busy = '';
+		}
+	}
+
+	async function searchUpgrade() {
+		if (!detail) return;
+		busy = 'upgrade';
+		try {
+			const r = await api.post<{ results: { success: boolean; message: string }[] }>('/upgrades/search', { ids: [detail.id] });
+			const res = r.results[0];
+			if (res?.success) toasts.success(res.message);
+			else toasts.error(res?.message ?? 'Search failed');
+			await load(detail.id);
+		} catch (e) {
+			toasts.error(e);
+		} finally {
+			busy = '';
+		}
+	}
+
+	$effect(() => {
+		live.fixesVersion;
+		if (detail?.fix && (detail.fix.status === 'queued' || detail.fix.status === 'running')) load(detail.id);
+	});
+
+	const outcomeLabel: Record<string, string> = { directPlay: 'Direct play', directStream: 'Remux', transcode: 'Transcode' };
+	const outcomeTone: Record<string, string> = { directPlay: 'good', directStream: 'ok', transcode: 'bad' };
+	const fixTone: Record<string, string> = { queued: 'muted', running: 'accent', done: 'good', failed: 'bad', cancelled: 'warn' };
 
 	const compatIssues = $derived(detail?.assessment.issues.filter((i) => i.area === 'compatibility') ?? []);
 	const qualityIssues = $derived(detail?.assessment.issues.filter((i) => i.area === 'quality') ?? []);
@@ -154,12 +195,64 @@
 				<button class="btn" onclick={rescan} disabled={!!busy}>
 					<Icon name="refresh" size={15} />{busy === 'rescan' ? 'Analysing…' : 'Re-analyse'}
 				</button>
+				{#if detail.assessment.ffmpegCommand && detail.status === 'ok'}
+					<button class="btn" onclick={queueFix} disabled={!!busy || detail.fix?.status === 'queued' || detail.fix?.status === 'running'}>
+						<Icon name="wrench" size={15} />{busy === 'fix' ? 'Queueing…' : 'Queue fix'}
+					</button>
+				{/if}
 				{#if detail.servarrKind}
+					<button class="btn" onclick={searchUpgrade} disabled={!!busy} title="Sonarr/Radarr only grab a release their quality profile ranks higher; the current file is kept">
+						<Icon name="search" size={15} />{busy === 'upgrade' ? 'Searching…' : 'Search for upgrade'}
+					</button>
 					<button class="btn danger" onclick={redownload} disabled={!!busy}>
 						<Icon name="download" size={15} />{busy === 'redownload' ? 'Requesting…' : `Redownload via ${titleCase(detail.servarrKind)}`}
 					</button>
 				{/if}
 			</div>
+			{#if detail.upgradeRequestedAt}
+				<p class="faint small" style="margin:-8px 0 0">Upgrade search requested {ago(detail.upgradeRequestedAt)}.</p>
+			{/if}
+
+			{#if detail.fix}
+				<div class="fixline">
+					<Badge tone={fixTone[detail.fix.status]}>Fix {detail.fix.status}</Badge>
+					{#if detail.fix.status === 'running'}
+						<div class="track grow"><div class="fill" style="width:{Math.round(detail.fix.progress * 100)}%"></div></div>
+						<span class="small">{Math.round(detail.fix.progress * 100)}%</span>
+					{:else if detail.fix.status === 'done' && detail.fix.sizeBefore && detail.fix.sizeAfter}
+						<span class="small muted">{bytes(detail.fix.sizeBefore)} → {bytes(detail.fix.sizeAfter)} · {ago(detail.fix.finishedAt)}</span>
+					{:else if detail.fix.status === 'failed'}
+						<span class="small" style="color:var(--bad)">{detail.fix.error}</span>
+					{:else if detail.fix.status === 'queued'}
+						<a class="small" href="/improve?tab=fixes">View queue</a>
+					{/if}
+				</div>
+			{/if}
+
+			{#if detail.devices.length}
+				<section>
+					<h3>On your devices</h3>
+					<ul class="devices">
+						{#each detail.devices as d (d.id)}
+							<li>
+								<div class="row">
+									<strong class="grow">{d.name}</strong>
+									<Badge tone={outcomeTone[d.outcome]}>{outcomeLabel[d.outcome]}</Badge>
+								</div>
+								{#if d.reasons.length}<div class="small muted">{d.reasons.join(' · ')}</div>{/if}
+								{#if d.subtitleNote}<div class="small faint">{d.subtitleNote}</div>{/if}
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
+
+			{#if detail.savings}
+				<p class="savings small">
+					<Icon name="info" size={14} />Re-encoding to HEVC would save about <strong>{bytes(detail.savings.savings)}</strong>
+					({Math.round((detail.savings.savings / detail.savings.currentSize) * 100)}%).
+				</p>
+			{/if}
 
 			<section>
 				<h3>Compatibility</h3>
@@ -270,6 +363,48 @@
 </Drawer>
 
 <style>
+	.fixline {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+	.fixline .track {
+		height: 6px;
+		min-width: 80px;
+		border-radius: 999px;
+		background: var(--surface-3);
+		overflow: hidden;
+	}
+	.fixline .fill {
+		height: 100%;
+		background: var(--accent);
+		transition: width 0.4s;
+	}
+	.devices {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.devices li {
+		padding: 10px 12px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface-2);
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.savings {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin: 0;
+		color: var(--text-2);
+	}
 	.title {
 		font-size: 18px;
 		word-break: break-word;

@@ -50,19 +50,21 @@ pub struct Delivery {
     pub error: Option<String>,
 }
 
+/// Binary units, matching the web UI.
 pub fn human_size(bytes: i64) -> String {
     let b = bytes as f64;
-    if b >= 1e12 {
-        format!("{:.1} TB", b / 1e12)
-    } else if b >= 1e9 {
-        format!("{:.1} GB", b / 1e9)
+    const K: f64 = 1024.0;
+    if b >= K.powi(4) {
+        format!("{:.1} TB", b / K.powi(4))
+    } else if b >= K.powi(3) {
+        format!("{:.1} GB", b / K.powi(3))
     } else {
-        format!("{:.0} MB", b / 1e6)
+        format!("{:.1} MB", b / K.powi(2))
     }
 }
 
 /// Split `https://ntfy.sh/topic` into the server URL and the topic.
-fn ntfy_parts(url: &str) -> Result<(String, String)> {
+pub fn ntfy_parts(url: &str) -> Result<(String, String)> {
     let url = url.trim().trim_end_matches('/');
     let (base, topic) = url.rsplit_once('/').context("ntfy URL must end with the topic, e.g. https://ntfy.sh/optimarr")?;
     if topic.is_empty() || !base.contains("://") || base.ends_with(':') || base.ends_with('/') {
