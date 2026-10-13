@@ -58,7 +58,7 @@ start.
   rescans for network mounts, and live progress in the browser.
 - Jellyfin playback history (Playback Reporting plugin) with transcode reasons per client and user.
 - Sonarr and Radarr: root folder sync, file matching, redownload, and import webhooks.
-- GitHub Releases with a multi-arch (amd64, arm64) Docker image for every version tag.
+- GitHub Releases with an amd64 Docker image for every version tag.
 
 ### Changed
 

@@ -85,8 +85,8 @@ The fix queue writes to your media folders, so mount them without `:ro` and turn
 
 ## Releases
 
-Every version is a GitHub Release with notes from [CHANGELOG.md](CHANGELOG.md) and a multi-arch
-(amd64, arm64) image: `ghcr.io/davidsteg/optimarr:<version>` and `:latest`.
+Every version is a GitHub Release with notes from [CHANGELOG.md](CHANGELOG.md) and an amd64
+image: `ghcr.io/davidsteg/optimarr:<version>` and `:latest`.
 
 To cut a release: bump the version in `VERSION`, `backend/Cargo.toml` and `frontend/package.json`,
 add a `## [x.y.z]` section to `CHANGELOG.md`, merge to master, then tag it:
