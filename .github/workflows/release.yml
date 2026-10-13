@@ -1,0 +1,111 @@
+name: Release
+
+# Push a tag like v2.0.0 to publish a release:
+#   1. the version is checked against VERSION and backend/Cargo.toml,
+#   2. tests run,
+#   3. a multi-arch image is pushed to ghcr.io/<owner>/optimarr with the version tags and latest,
+#   4. a GitHub Release is created with the matching CHANGELOG.md section as its notes.
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Check version numbers
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          file_version="$(tr -d '[:space:]' < VERSION)"
+          cargo_version="$(grep -m1 '^version' backend/Cargo.toml | cut -d '"' -f2)"
+          ui_version="$(node -p "require('./frontend/package.json').version")"
+          for v in "$file_version" "$cargo_version" "$ui_version"; do
+            if [ "$v" != "$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match VERSION ($file_version), Cargo.toml ($cargo_version) and package.json ($ui_version)"
+              exit 1
+            fi
+          done
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cd frontend && npm ci && npm run check && npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
+  image:
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/optimarr
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [verify, image]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write release notes
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/optimarr
+        run: |
+          # The CHANGELOG section for this version, without its heading.
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          {
+            echo
+            echo '### Docker image'
+            echo
+            echo '```bash'
+            echo "docker pull ${IMAGE,,}:${VERSION}"
+            echo '```'
+            echo
+            echo "Also tagged \`latest\`. Platforms: linux/amd64, linux/arm64."
+          } >> notes.md
+          cat notes.md
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --title "Optimarr ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
