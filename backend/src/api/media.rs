@@ -161,6 +161,12 @@ pub struct MediaDetail {
     pub assessment: Assessment,
     pub playback: Value,
     pub servarr_remote_path: Option<String>,
+    /// What each enabled device profile would do with this file.
+    pub devices: Vec<Value>,
+    /// Space saved by re-encoding to HEVC, when worthwhile.
+    pub savings: Option<crate::media::savings::Estimate>,
+    /// Most recent fix-queue entry for this file.
+    pub fix: Option<crate::fixer::Fix>,
 }
 
 pub async fn build_detail(state: &AppState, file: MediaFile) -> anyhow::Result<MediaDetail> {
@@ -178,6 +184,11 @@ pub async fn build_detail(state: &AppState, file: MediaFile) -> anyhow::Result<M
     .fetch_one(&state.pool)
     .await
     .map(|(plays, transcodes, last)| json!({ "plays": plays, "transcodes": transcodes, "lastPlayed": last }))?;
+    let info = file.to_media_info();
+    let devices = super::devices::for_file(state, &info).await?;
+    let savings = crate::media::savings::estimate(&info, file.size as u64, crate::media::savings::Target::Hevc);
+    let fix: Option<crate::fixer::Fix> =
+        sqlx::query_as("SELECT * FROM fixes WHERE media_file_id = ? ORDER BY id DESC LIMIT 1").bind(file.id).fetch_optional(&state.pool).await?;
     let remote = match file.servarr_kind.as_deref().and_then(servarr::Kind::parse) {
         Some(k) => servarr::load_settings(state, k).await.ok().map(|s| servarr::remote_path(&s, &file.path)),
         None => None,
@@ -188,6 +199,9 @@ pub async fn build_detail(state: &AppState, file: MediaFile) -> anyhow::Result<M
         assessment,
         playback,
         servarr_remote_path: remote,
+        devices,
+        savings,
+        fix,
         file,
     })
 }

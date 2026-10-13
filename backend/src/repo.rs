@@ -89,6 +89,8 @@ pub struct MediaFile {
     pub radarr_movie_title: Option<String>,
     pub year: Option<i64>,
     pub matched_at: Option<String>,
+    pub first_seen_at: Option<String>,
+    pub upgrade_requested_at: Option<String>,
 }
 
 impl MediaFile {
@@ -159,8 +161,8 @@ pub async fn upsert_analysis<'e, E: SqliteExecutor<'e>>(ex: E, a: &NewAnalysis<'
             video_codec_tag, codec_tag_ok, video_profile, bit_depth, width, height, frame_rate, video_bitrate,
             overall_bitrate, hdr, hdr_type, fast_start, audio_codecs, audio_tracks, subtitle_formats, subtitle_tracks,
             compat_score, compat_verdict, quality_score, quality_verdict, issues, status, status_reason,
-            processing_since, analyzed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)
+            processing_since, analyzed_at, first_seen_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)
          ON CONFLICT(path) DO UPDATE SET
             library_id = COALESCE(excluded.library_id, media_files.library_id),
             file_name = excluded.file_name, size = excluded.size, mtime = excluded.mtime,
@@ -207,6 +209,7 @@ pub async fn upsert_analysis<'e, E: SqliteExecutor<'e>>(ex: E, a: &NewAnalysis<'
     .bind(Json(&a.assessment.issues))
     .bind(status)
     .bind(a.broken)
+    .bind(now())
     .bind(now())
     .execute(ex)
     .await?;

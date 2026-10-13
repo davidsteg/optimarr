@@ -412,7 +412,72 @@ fn quality_score(info: &MediaInfo, p: &QualityProfile, issues: &mut Vec<Issue>) 
         issue(issues, "no_audio", Q, Severity::Warning, 20, "File has no audio track".into(), None);
     }
 
+    language_checks(info, p, &mut score, issues);
+
     score.clamp(0, 100)
+}
+
+fn language_list(langs: &[String]) -> String {
+    langs.iter().map(|l| super::files::language_name(l).unwrap_or_else(|| l.clone())).collect::<Vec<_>>().join(" or ")
+}
+
+/// Missing audio or subtitle languages, and subtitles that only exist as images.
+fn language_checks(info: &MediaInfo, p: &QualityProfile, score: &mut i32, issues: &mut Vec<Issue>) {
+    use super::files::{same_language, unknown_language};
+    use IssueArea::Quality as Q;
+    let wanted = |tag: &str, langs: &[String]| langs.iter().any(|l| same_language(tag, l));
+
+    let audio_langs = &p.preferred_audio_languages;
+    // Untagged tracks might be in the right language, so only flag files whose tracks are all tagged.
+    if !audio_langs.is_empty()
+        && !info.audio.is_empty()
+        && !info.audio.iter().any(|a| unknown_language(&a.language))
+        && !info.audio.iter().any(|a| wanted(&a.language, audio_langs))
+    {
+        *score -= p.penalty_missing_audio_language;
+        let have: Vec<String> = info.audio.iter().map(|a| super::files::language_name(&a.language).unwrap_or_else(|| a.language.clone())).collect();
+        issue(
+            issues,
+            "missing_audio_language",
+            Q,
+            Severity::Warning,
+            p.penalty_missing_audio_language,
+            format!("No {} audio (has {})", language_list(audio_langs), have.join(", ")),
+            Some("Look for a release with the audio language you want"),
+        );
+    }
+
+    let sub_langs = &p.preferred_subtitle_languages;
+    if !sub_langs.is_empty() {
+        let matching: Vec<&SubtitleTrack> = info.subtitles.iter().filter(|s| wanted(&s.language, sub_langs)).collect();
+        if matching.is_empty() {
+            *score -= p.penalty_missing_subtitle_language;
+            issue(
+                issues,
+                "missing_subtitle_language",
+                Q,
+                Severity::Info,
+                p.penalty_missing_subtitle_language,
+                format!("No {} subtitles", language_list(sub_langs)),
+                Some("Download subtitles with Bazarr, or place an .srt file next to the video"),
+            );
+        } else if matching.iter().all(|s| s.is_image_based()) {
+            *score -= p.penalty_image_subtitles;
+            issue(
+                issues,
+                "image_subtitles",
+                Q,
+                Severity::Warning,
+                p.penalty_image_subtitles,
+                format!(
+                    "{} subtitles are only available as images ({}), which forces a transcode to burn them in",
+                    language_list(sub_langs),
+                    matching.iter().map(|s| s.format.as_str()).collect::<Vec<_>>().join(", ")
+                ),
+                Some("Add a text (.srt) subtitle, e.g. with Bazarr or OCR in Subtitle Edit"),
+            );
+        }
+    }
 }
 
 fn describe(info: &MediaInfo) -> String {
@@ -564,6 +629,26 @@ mod tests {
         m.video.as_mut().unwrap().bitrate = 1_000_000;
         let a = assess(&m, 0, "/m/a.mp4", &Default::default(), &Default::default());
         assert!(a.issues.iter().any(|i| i.code == "very_low_bitrate"));
+    }
+
+    #[test]
+    fn language_checks() {
+        let q =
+            QualityProfile { preferred_audio_languages: vec!["de".into()], preferred_subtitle_languages: vec!["eng".into()], ..Default::default() };
+        // English-only audio, English PGS subtitles only.
+        let a = assess(&hevc_mkv(), 0, "/m/a.mkv", &Default::default(), &q);
+        assert!(a.issues.iter().any(|i| i.code == "missing_audio_language"), "{:?}", a.issues);
+        assert!(a.issues.iter().any(|i| i.code == "image_subtitles"));
+        // No subtitles at all.
+        let a = assess(&h264_mp4(), 0, "/m/a.mp4", &Default::default(), &q);
+        assert!(a.issues.iter().any(|i| i.code == "missing_subtitle_language"));
+        // Untagged audio is not flagged; checks are off by default.
+        let mut m = h264_mp4();
+        m.audio[0].language = String::new();
+        let a = assess(&m, 0, "/m/a.mp4", &Default::default(), &q);
+        assert!(!a.issues.iter().any(|i| i.code == "missing_audio_language"));
+        let a = assess(&hevc_mkv(), 0, "/m/a.mkv", &Default::default(), &Default::default());
+        assert!(!a.issues.iter().any(|i| i.code.starts_with("missing_") || i.code == "image_subtitles"));
     }
 
     #[test]

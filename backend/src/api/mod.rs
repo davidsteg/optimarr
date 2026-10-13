@@ -7,14 +7,19 @@ use crate::state::AppState;
 
 mod agent;
 mod dashboard;
+mod devices;
 mod events;
+mod fixes;
 mod integrations;
 mod jobs;
 mod libraries;
 mod media;
+mod notifications;
 mod playback;
+mod savings;
 mod settings;
 mod system;
+mod upgrades;
 mod webhooks;
 
 pub use media::MediaSummary;
@@ -114,6 +119,33 @@ pub fn router() -> Router<AppState> {
         .route("/api/agent/files/{id}/redownload", post(agent::redownload))
         .route("/api/agent/lookup", get(agent::lookup))
         .route("/api/agent/transcodes", get(agent::transcodes))
+        .route("/api/agent/devices", get(agent::devices))
+        .route("/api/agent/devices/{id}/transcodes", get(agent::device_transcodes))
+        .route("/api/agent/savings", get(agent::savings))
+        .route("/api/agent/upgrades", get(agent::upgrades))
+        .route("/api/agent/files/{id}/upgrade", post(agent::upgrade))
+        .route("/api/agent/files/{id}/fix", post(agent::fix))
+        .route("/api/agent/fixes", get(agent::fixes))
+        .route("/api/agent/notifications", get(agent::notifications))
+        // devices
+        .route("/api/devices", get(devices::list).post(devices::create))
+        .route("/api/devices/templates", get(devices::templates))
+        .route("/api/devices/summary", get(devices::summary))
+        .route("/api/devices/{id}", put(devices::update).delete(devices::remove))
+        // fixes
+        .route("/api/fixes", get(fixes::list).post(fixes::enqueue).delete(fixes::clear_finished))
+        .route("/api/fixes/{id}/cancel", post(fixes::cancel))
+        .route("/api/settings/fixes", get(fixes::get_settings).put(fixes::put_settings))
+        // upgrades
+        .route("/api/upgrades", get(upgrades::candidates))
+        .route("/api/upgrades/search", post(upgrades::search))
+        .route("/api/settings/upgrades", get(upgrades::get_settings).put(upgrades::put_settings))
+        // savings
+        .route("/api/savings", get(savings::overview))
+        // notifications
+        .route("/api/settings/notifications", get(notifications::get_settings).put(notifications::put_settings))
+        .route("/api/notifications/test", post(notifications::test))
+        .route("/api/notifications", get(notifications::history))
         // webhooks
         .route("/api/webhooks/tdarr", post(webhooks::tdarr))
         .route("/api/library/webhook/tdarr", post(webhooks::tdarr))

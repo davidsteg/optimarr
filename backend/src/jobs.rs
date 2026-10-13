@@ -40,6 +40,8 @@ pub enum Event {
     /// Media rows changed; clients should refresh lists/dashboards.
     MediaChanged,
     LibrariesChanged,
+    /// The fix queue changed (new, progress, finished).
+    FixesChanged,
 }
 
 pub struct JobHandle {

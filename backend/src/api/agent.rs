@@ -33,7 +33,7 @@ pub struct FileBrief {
     main_issues: Vec<String>,
 }
 
-fn brief(m: &MediaFile) -> FileBrief {
+pub fn brief(m: &MediaFile) -> FileBrief {
     FileBrief {
         id: m.id,
         title: m.title(),
@@ -64,6 +64,13 @@ pub struct Report {
     ffmpeg_command: Option<String>,
     managed_by: Option<Value>,
     playback: Value,
+    /// What each enabled device profile would do: directPlay, directStream or transcode, with reasons.
+    devices: Vec<Value>,
+    /// Estimated space saved by re-encoding to HEVC, when worthwhile.
+    savings: Option<crate::media::savings::Estimate>,
+    /// Latest fix-queue entry: status, progress, error.
+    fix: Option<Value>,
+    upgrade_requested_at: Option<String>,
 }
 
 async fn report(state: &AppState, m: MediaFile) -> anyhow::Result<Report> {
@@ -130,6 +137,10 @@ async fn report(state: &AppState, m: MediaFile) -> anyhow::Result<Report> {
         ffmpeg_command: d.assessment.ffmpeg_command.clone(),
         managed_by,
         playback: d.playback.clone(),
+        devices: d.devices.clone(),
+        savings: d.savings.clone(),
+        fix: d.fix.as_ref().map(|x| json!({ "id": x.id, "status": x.status, "progress": x.progress, "error": x.error, "finishedAt": x.finished_at })),
+        upgrade_requested_at: f.upgrade_requested_at.clone(),
     })
 }
 
@@ -157,7 +168,7 @@ pub async fn overview(State(state): State<AppState>) -> ApiResult<Json<Value>> {
     let pct = |n: i64| if files > 0 { (n as f64 * 1000.0 / files as f64).round() / 10.0 } else { 0.0 };
     let summary = format!(
         "{files} files ({}). Compatibility: {}% optimal, {}% good, {}% poor. Quality: {}% excellent, {}% good, {}% fair, {}% poor. {broken} broken.",
-        human_size(size),
+        crate::notify::human_size(size),
         pct(optimal),
         pct(good),
         pct(poor),
@@ -294,13 +305,138 @@ pub async fn redownload(State(state): State<AppState>, Path(id): Path<i64>) -> A
     Ok(Json(json!(r.into_iter().next())))
 }
 
-fn human_size(bytes: i64) -> String {
-    let b = bytes as f64;
-    if b >= 1e12 {
-        format!("{:.1} TB", b / 1e12)
-    } else if b >= 1e9 {
-        format!("{:.1} GB", b / 1e9)
+/// Per device profile: how many files direct-play, remux or transcode, and the top reasons.
+pub async fn devices(State(state): State<AppState>) -> ApiResult<Json<Value>> {
+    let devices = super::devices::device_summary(&state).await?;
+    let summary = if devices.is_empty() {
+        "No device profiles are set up (Settings > Devices).".to_string()
     } else {
-        format!("{:.0} MB", b / 1e6)
-    }
+        devices
+            .iter()
+            .map(|d| {
+                format!(
+                    "{}: {} direct play, {} remux, {} transcode",
+                    d["name"].as_str().unwrap_or("?"),
+                    d["directPlay"],
+                    d["directStream"],
+                    d["transcode"]
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+            + "."
+    };
+    Ok(Json(json!({ "summary": summary, "devices": devices })))
+}
+
+#[derive(Deserialize)]
+pub struct LimitQuery {
+    limit: Option<usize>,
+}
+
+/// Files that would be transcoded on one device, with the reasons.
+pub async fn device_transcodes(State(state): State<AppState>, Path(id): Path<i64>, Query(q): Query<LimitQuery>) -> ApiResult<Json<Value>> {
+    let (total, files) = super::devices::transcoding_files(&state, id, q.limit.unwrap_or(20).clamp(1, 200))
+        .await?
+        .ok_or_else(|| not_found("No device with that id"))?;
+    Ok(Json(json!({
+        "total": total,
+        "files": files.iter().map(|(m, reasons)| json!({ "file": brief(m), "reasons": reasons })).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct SavingsQuery {
+    target: Option<String>,
+}
+
+pub async fn savings(State(state): State<AppState>, Query(q): Query<SavingsQuery>) -> ApiResult<Json<Value>> {
+    let target = match q.target.as_deref() {
+        None | Some("") => crate::media::savings::Target::Hevc,
+        Some(t) => crate::media::savings::Target::parse(t).ok_or_else(|| bad_request("target must be hevc or av1"))?,
+    };
+    Ok(Json(super::savings::compute(&state, target, None, 20).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpgradesQuery {
+    max_score: Option<i64>,
+    limit: Option<i64>,
+}
+
+/// Low-quality files Sonarr/Radarr could search a better release for.
+pub async fn upgrades(State(state): State<AppState>, Query(q): Query<UpgradesQuery>) -> ApiResult<Json<Value>> {
+    let s: crate::upgrades::UpgradeSettings = crate::settings::load(&state.pool).await?;
+    let max = q.max_score.unwrap_or(s.max_quality_score).clamp(0, 100);
+    let (total, files) = crate::upgrades::candidates(&state, max, false, q.limit.unwrap_or(20).clamp(1, 100)).await?;
+    Ok(Json(json!({
+        "summary": format!(
+            "{total} files managed by Sonarr/Radarr have a quality score of {max} or lower and were not searched in the last {} days.",
+            s.cooldown_days
+        ),
+        "total": total,
+        "files": files.iter().map(brief).collect::<Vec<_>>(),
+    })))
+}
+
+/// Ask Sonarr/Radarr to search for a better release. The current file is kept.
+pub async fn upgrade(State(state): State<AppState>, Path(id): Path<i64>) -> ApiResult<Json<Value>> {
+    let r = crate::upgrades::search(&state, &[id]).await?;
+    Ok(Json(json!(r.into_iter().next())))
+}
+
+/// Queue the suggested ffmpeg fix for a file.
+pub async fn fix(State(state): State<AppState>, Path(id): Path<i64>) -> ApiResult<Json<Value>> {
+    let f = crate::fixer::enqueue(&state, id).await.map_err(super::fixes::enqueue_error)?;
+    let s: crate::fixer::FixSettings = crate::settings::load(&state.pool).await?;
+    Ok(Json(json!({
+        "fixId": f.id,
+        "status": f.status,
+        "command": f.command,
+        "workerEnabled": s.enabled,
+        "summary": if s.enabled {
+            "Queued; the fix worker will run it next."
+        } else {
+            "Queued, but the fix worker is turned off (Settings > Fixes), so it will not run until it is enabled."
+        },
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct FixesQuery {
+    status: Option<String>,
+    limit: Option<i64>,
+}
+
+pub async fn fixes(State(state): State<AppState>, Query(q): Query<FixesQuery>) -> ApiResult<Json<Value>> {
+    let items = crate::fixer::list(&state, q.status.as_deref().filter(|s| !s.is_empty()), q.limit.unwrap_or(20).clamp(1, 200)).await?;
+    Ok(Json(json!({
+        "fixes": items.iter().map(|f| json!({
+            "id": f.id,
+            "fileId": f.media_file_id,
+            "path": f.path,
+            "status": f.status,
+            "progress": f.progress,
+            "error": f.error,
+            "sizeBefore": f.size_before,
+            "sizeAfter": f.size_after,
+            "finishedAt": f.finished_at,
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+/// Recent notifications (new problem files, finished fixes, upgrade searches).
+pub async fn notifications(State(state): State<AppState>, Query(q): Query<LimitQuery>) -> ApiResult<Json<Value>> {
+    let rows: Vec<(String, String, String, String)> =
+        sqlx::query_as("SELECT event, title, message, sent_at FROM notifications WHERE event != 'test' ORDER BY id DESC LIMIT ?")
+            .bind(q.limit.unwrap_or(20).clamp(1, 200) as i64)
+            .fetch_all(&state.pool)
+            .await?;
+    Ok(Json(json!({
+        "notifications": rows
+            .into_iter()
+            .map(|(event, title, message, sent_at)| json!({ "event": event, "title": title, "message": message, "sentAt": sent_at }))
+            .collect::<Vec<_>>(),
+    })))
 }

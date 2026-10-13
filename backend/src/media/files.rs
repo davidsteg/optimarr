@@ -141,6 +141,24 @@ const LANGUAGES: &[(&str, &str, &str)] = &[
 ];
 
 /// Maps "en", "eng", "en-US" or "english" to a display name.
+/// True when two language tags name the same language ("en", "eng", "English", "en-US"). Empty and
+/// undetermined tags never match.
+pub fn same_language(a: &str, b: &str) -> bool {
+    let base = |t: &str| {
+        let t = t.trim().to_lowercase();
+        let b = t.split(['-', '_']).next().unwrap_or("").to_string();
+        LANGUAGES.iter().find(|(two, three, name)| b == *two || b == *three || b == name.to_lowercase()).map(|(_, _, n)| n.to_string()).unwrap_or(b)
+    };
+    let (a, b) = (base(a), base(b));
+    !a.is_empty() && a != "und" && a == b
+}
+
+/// Whether a track carries no usable language tag.
+pub fn unknown_language(tag: &str) -> bool {
+    let t = tag.trim().to_lowercase();
+    t.is_empty() || t == "und" || t == "unknown" || t == "zxx"
+}
+
 pub fn language_name(tag: &str) -> Option<String> {
     let t = tag.to_lowercase();
     let (base, region) = match t.split_once(['-', '_']) {
@@ -227,5 +245,9 @@ mod tests {
         assert_eq!(language_name("en-us").as_deref(), Some("English (en-US)"));
         assert_eq!(language_name("ger").as_deref(), Some("German"));
         assert_eq!(language_name("forced"), None);
+        assert!(same_language("eng", "en-US"));
+        assert!(same_language("German", "deu"));
+        assert!(!same_language("und", "und"));
+        assert!(!same_language("en", "fr"));
     }
 }
