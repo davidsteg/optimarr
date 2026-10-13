@@ -88,19 +88,21 @@ async fn report(state: &AppState, m: MediaFile) -> anyhow::Result<Report> {
         .0
         .iter()
         .map(|a| {
-            format!(
-                "{} {}{}",
-                a.codec,
-                channel_label(a.channels),
-                if a.language.is_empty() { String::new() } else { format!(" [{}]", a.language) }
-            )
+            format!("{} {}{}", a.codec, channel_label(a.channels), if a.language.is_empty() { String::new() } else { format!(" [{}]", a.language) })
         })
         .collect();
     let subs: Vec<String> = f
         .subtitle_tracks
         .0
         .iter()
-        .map(|s| format!("{}{}{}", s.format, if s.language.is_empty() { String::new() } else { format!(" [{}]", s.language) }, if s.embedded { "" } else { " (external)" }))
+        .map(|s| {
+            format!(
+                "{}{}{}",
+                s.format,
+                if s.language.is_empty() { String::new() } else { format!(" [{}]", s.language) },
+                if s.embedded { "" } else { " (external)" }
+            )
+        })
         .collect();
     let managed_by = match f.servarr_kind.as_deref() {
         Some("sonarr") => Some(json!({ "service": "Sonarr", "seriesId": f.sonarr_series_id, "episodeId": f.sonarr_episode_id })),
@@ -149,15 +151,13 @@ pub async fn overview(State(state): State<AppState>) -> ApiResult<Json<Value>> {
     )
     .fetch_all(&state.pool)
     .await?;
-    let worst: Vec<MediaFile> = sqlx::query_as(
-        "SELECT * FROM media_files WHERE status = 'ok' ORDER BY (compat_score + quality_score) ASC LIMIT 5",
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let worst: Vec<MediaFile> = sqlx::query_as("SELECT * FROM media_files WHERE status = 'ok' ORDER BY (compat_score + quality_score) ASC LIMIT 5")
+        .fetch_all(&state.pool)
+        .await?;
     let pct = |n: i64| if files > 0 { (n as f64 * 1000.0 / files as f64).round() / 10.0 } else { 0.0 };
     let summary = format!(
-        "{files} files ({:.1} TB). Compatibility: {}% optimal, {}% good, {}% poor. Quality: {}% excellent, {}% good, {}% fair, {}% poor. {broken} broken.",
-        size as f64 / 1e12,
+        "{files} files ({}). Compatibility: {}% optimal, {}% good, {}% poor. Quality: {}% excellent, {}% good, {}% fair, {}% poor. {broken} broken.",
+        human_size(size),
         pct(optimal),
         pct(good),
         pct(poor),
@@ -292,4 +292,15 @@ pub async fn rescan(State(state): State<AppState>, Path(id): Path<i64>) -> ApiRe
 pub async fn redownload(State(state): State<AppState>, Path(id): Path<i64>) -> ApiResult<Json<Value>> {
     let r = servarr::redownload(&state, &[id]).await?;
     Ok(Json(json!(r.into_iter().next())))
+}
+
+fn human_size(bytes: i64) -> String {
+    let b = bytes as f64;
+    if b >= 1e12 {
+        format!("{:.1} TB", b / 1e12)
+    } else if b >= 1e9 {
+        format!("{:.1} GB", b / 1e9)
+    } else {
+        format!("{:.0} MB", b / 1e6)
+    }
 }

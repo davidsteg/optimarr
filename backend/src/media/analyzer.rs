@@ -9,6 +9,7 @@ use super::rating;
 use crate::settings::{CompatibilityProfile, QualityProfile};
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Outcome {
     /// File was read; `broken` carries a reason when the data is unusable.
     Analyzed { info: MediaInfo, assessment: Assessment, broken: Option<String> },

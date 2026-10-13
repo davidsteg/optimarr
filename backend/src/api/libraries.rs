@@ -48,20 +48,18 @@ pub async fn create(State(state): State<AppState>, Json(body): Json<NewLibrary>)
         .name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or_else(|| std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(path.clone()));
-    let id: i64 = sqlx::query_scalar(
-        "INSERT INTO libraries (name, path, category, watch, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind(&name)
-    .bind(&path)
-    .bind(&category)
-    .bind(body.watch.unwrap_or(true))
-    .bind(now())
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|e| match &e {
-        sqlx::Error::Database(d) if d.is_unique_violation() => ApiError::Conflict(format!("{path} is already a library")),
-        _ => e.into(),
-    })?;
+    let id: i64 = sqlx::query_scalar("INSERT INTO libraries (name, path, category, watch, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id")
+        .bind(&name)
+        .bind(&path)
+        .bind(&category)
+        .bind(body.watch.unwrap_or(true))
+        .bind(now())
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| match &e {
+            sqlx::Error::Database(d) if d.is_unique_violation() => ApiError::Conflict(format!("{path} is already a library")),
+            _ => e.into(),
+        })?;
     // Attach files that were analyzed before the library existed (e.g. legacy imports).
     sqlx::query("UPDATE media_files SET library_id = ? WHERE library_id IS NULL AND (path = ? OR path LIKE ? ESCAPE '\\')")
         .bind(id)

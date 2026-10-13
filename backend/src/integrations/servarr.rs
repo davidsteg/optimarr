@@ -79,11 +79,7 @@ impl Client {
     }
 
     fn req(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-        let mut r = self
-            .http
-            .request(method, self.url(path))
-            .header("X-Api-Key", self.settings.api_key.trim())
-            .header("Accept", "application/json");
+        let mut r = self.http.request(method, self.url(path)).header("X-Api-Key", self.settings.api_key.trim()).header("Accept", "application/json");
         if let Some(u) = self.settings.basic_auth_username.as_ref().filter(|u| !u.is_empty()) {
             r = r.basic_auth(u, self.settings.basic_auth_password.clone());
         }
@@ -266,15 +262,7 @@ struct SonarrEpisode {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Match {
     #[serde(rename_all = "camelCase")]
-    Episode {
-        series_id: i64,
-        series_title: String,
-        year: Option<i64>,
-        file_id: i64,
-        episode_ids: Vec<i64>,
-        season: i64,
-        episode: Option<i64>,
-    },
+    Episode { series_id: i64, series_title: String, year: Option<i64>, file_id: i64, episode_ids: Vec<i64>, season: i64, episode: Option<i64> },
     #[serde(rename_all = "camelCase")]
     Movie { movie_id: i64, file_id: i64, title: String, year: Option<i64> },
 }
@@ -289,10 +277,7 @@ pub async fn sync_root_folders(state: &AppState, kind: Kind) -> Result<usize> {
     for f in &folders {
         let local = map_path(&client.settings.path_mappings, &f.path);
         let local = local.trim_end_matches('/').to_string();
-        let name = std::path::Path::new(&local)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| local.clone());
+        let name = std::path::Path::new(&local).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| local.clone());
         let category = match kind {
             Kind::Sonarr => "series",
             Kind::Radarr => "movies",
@@ -484,12 +469,12 @@ pub async fn redownload(state: &AppState, ids: &[i64]) -> Result<Vec<RedownloadR
         };
         if target.is_none() {
             for kind in [Kind::Sonarr, Kind::Radarr] {
-                if !clients.contains_key(&kind) {
-                    clients.insert(kind, Client::from_state(state, kind).await.ok());
+                if let std::collections::hash_map::Entry::Vacant(e) = clients.entry(kind) {
+                    e.insert(Client::from_state(state, kind).await.ok());
                 }
                 let Some(Some(c)) = clients.get(&kind) else { continue };
-                if !indexes.contains_key(&kind) {
-                    indexes.insert(kind, c.file_index().await.unwrap_or_default());
+                if let std::collections::hash_map::Entry::Vacant(e) = indexes.entry(kind) {
+                    e.insert(c.file_index().await.unwrap_or_default());
                 }
                 if let Some(m) = indexes[&kind].get(&norm_key(&file.path)) {
                     target = Some((kind, m.clone()));
@@ -498,19 +483,19 @@ pub async fn redownload(state: &AppState, ids: &[i64]) -> Result<Vec<RedownloadR
             }
         }
         let Some((kind, m)) = target else {
+            out.push(RedownloadResult { id, success: false, service: None, message: "Not managed by Sonarr or Radarr (run a match first)".into() });
+            continue;
+        };
+        if let std::collections::hash_map::Entry::Vacant(e) = clients.entry(kind) {
+            e.insert(Client::from_state(state, kind).await.ok());
+        }
+        let Some(Some(client)) = clients.get(&kind) else {
             out.push(RedownloadResult {
                 id,
                 success: false,
-                service: None,
-                message: "Not managed by Sonarr or Radarr (run a match first)".into(),
+                service: Some(kind.label().into()),
+                message: format!("{} is not configured", kind.label()),
             });
-            continue;
-        };
-        if !clients.contains_key(&kind) {
-            clients.insert(kind, Client::from_state(state, kind).await.ok());
-        }
-        let Some(Some(client)) = clients.get(&kind) else {
-            out.push(RedownloadResult { id, success: false, service: Some(kind.label().into()), message: format!("{} is not configured", kind.label()) });
             continue;
         };
         let res: Result<()> = async {
@@ -538,7 +523,12 @@ pub async fn redownload(state: &AppState, ids: &[i64]) -> Result<Vec<RedownloadR
                     .bind(id)
                     .execute(&state.pool)
                     .await?;
-                out.push(RedownloadResult { id, success: true, service: Some(kind.label().into()), message: format!("Search started in {}", kind.label()) });
+                out.push(RedownloadResult {
+                    id,
+                    success: true,
+                    service: Some(kind.label().into()),
+                    message: format!("Search started in {}", kind.label()),
+                });
             }
             Err(e) => out.push(RedownloadResult { id, success: false, service: Some(kind.label().into()), message: format!("{e:#}") }),
         }

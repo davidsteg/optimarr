@@ -6,9 +6,7 @@ use std::path::{Path, PathBuf};
 use super::model::SubtitleTrack;
 use super::probe::normalize_subtitle_format;
 
-pub const VIDEO_EXTENSIONS: &[&str] = &[
-    "mp4", "m4v", "mov", "mkv", "avi", "ts", "m2ts", "mts", "webm", "ogv", "wmv", "flv", "mpg", "mpeg",
-];
+pub const VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "mkv", "avi", "ts", "m2ts", "mts", "webm", "ogv", "wmv", "flv", "mpg", "mpeg"];
 pub const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt", "ass", "ssa", "sub", "idx", "sup"];
 
 fn ext_lower(path: &Path) -> Option<String> {
@@ -73,11 +71,7 @@ pub fn external_subtitles(video: &Path, siblings: &[String]) -> Vec<SubtitleTrac
         .filter_map(|name| {
             let p = Path::new(name.as_str());
             let sub_stem = p.file_stem()?.to_str()?.to_lowercase();
-            let rest = if sub_stem == stem_lower {
-                ""
-            } else {
-                sub_stem.strip_prefix(&stem_lower)?.strip_prefix('.')?
-            };
+            let rest = if sub_stem == stem_lower { "" } else { sub_stem.strip_prefix(&stem_lower)?.strip_prefix('.')? };
             let ext = ext_lower(p)?;
             // An .idx/.sub pair is one VobSub track; count it once.
             if ext == "sub" && siblings.iter().any(|s| s.eq_ignore_ascii_case(&name.replace(".sub", ".idx"))) {
@@ -93,7 +87,7 @@ pub fn external_subtitles(video: &Path, siblings: &[String]) -> Vec<SubtitleTrac
                 format,
                 language: tags.iter().find_map(|t| language_name(t)).unwrap_or_default(),
                 embedded: false,
-                forced: tags.iter().any(|t| *t == "forced"),
+                forced: tags.contains(&"forced"),
                 path: Some(dir.join(name).to_string_lossy().into_owned()),
             })
         })
@@ -153,9 +147,7 @@ pub fn language_name(tag: &str) -> Option<String> {
         Some((b, r)) => (b.to_string(), Some(r.to_uppercase())),
         None => (t.clone(), None),
     };
-    let name = LANGUAGES.iter().find_map(|(two, three, name)| {
-        (base == *two || base == *three || base == name.to_lowercase()).then_some(*name)
-    })?;
+    let name = LANGUAGES.iter().find_map(|(two, three, name)| (base == *two || base == *three || base == name.to_lowercase()).then_some(*name))?;
     Some(match region {
         Some(r) if r.len() == 2 => format!("{name} ({base}-{r})"),
         _ => name.to_string(),
@@ -182,11 +174,7 @@ pub fn discover(root: &Path) -> Vec<(PathBuf, std::fs::Metadata)> {
 }
 
 pub fn mtime_secs(md: &std::fs::Metadata) -> i64 {
-    md.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 #[cfg(test)]

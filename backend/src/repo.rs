@@ -146,17 +146,11 @@ pub struct NewAnalysis<'a> {
 pub async fn upsert_analysis<'e, E: SqliteExecutor<'e>>(ex: E, a: &NewAnalysis<'_>) -> sqlx::Result<()> {
     let info = a.info;
     let v = info.video.clone().unwrap_or_default();
-    let file_name = std::path::Path::new(a.path)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| a.path.to_string());
+    let file_name = std::path::Path::new(a.path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| a.path.to_string());
     let mut audio_codecs: Vec<&str> = info.audio.iter().map(|t| t.codec.as_str()).collect();
     audio_codecs.dedup();
-    let mut sub_formats: Vec<String> = info
-        .subtitles
-        .iter()
-        .map(|s| if s.embedded { s.format.clone() } else { format!("{} (external)", s.format) })
-        .collect();
+    let mut sub_formats: Vec<String> =
+        info.subtitles.iter().map(|s| if s.embedded { s.format.clone() } else { format!("{} (external)", s.format) }).collect();
     sub_formats.sort();
     sub_formats.dedup();
     let status = if a.broken.is_some() { "broken" } else { "ok" };
@@ -220,17 +214,15 @@ pub async fn upsert_analysis<'e, E: SqliteExecutor<'e>>(ex: E, a: &NewAnalysis<'
 }
 
 pub async fn update_scores<'e, E: SqliteExecutor<'e>>(ex: E, id: i64, a: &Assessment) -> sqlx::Result<()> {
-    sqlx::query(
-        "UPDATE media_files SET compat_score=?, compat_verdict=?, quality_score=?, quality_verdict=?, issues=? WHERE id=?",
-    )
-    .bind(a.compat_score as i64)
-    .bind(&a.compat_verdict)
-    .bind(a.quality_score as i64)
-    .bind(&a.quality_verdict)
-    .bind(Json(&a.issues))
-    .bind(id)
-    .execute(ex)
-    .await?;
+    sqlx::query("UPDATE media_files SET compat_score=?, compat_verdict=?, quality_score=?, quality_verdict=?, issues=? WHERE id=?")
+        .bind(a.compat_score as i64)
+        .bind(&a.compat_verdict)
+        .bind(a.quality_score as i64)
+        .bind(&a.quality_verdict)
+        .bind(Json(&a.issues))
+        .bind(id)
+        .execute(ex)
+        .await?;
     Ok(())
 }
 
@@ -267,10 +259,7 @@ pub async fn get_library(pool: &SqlitePool, id: i64) -> sqlx::Result<Option<Libr
 /// Library whose root contains `path` (longest root wins).
 pub async fn library_for_path(pool: &SqlitePool, path: &str) -> sqlx::Result<Option<Library>> {
     let libs: Vec<Library> = sqlx::query_as("SELECT * FROM libraries").fetch_all(pool).await?;
-    Ok(libs
-        .into_iter()
-        .filter(|l| path_is_under(path, &l.path))
-        .max_by_key(|l| l.path.len()))
+    Ok(libs.into_iter().filter(|l| path_is_under(path, &l.path)).max_by_key(|l| l.path.len()))
 }
 
 pub fn path_is_under(path: &str, root: &str) -> bool {
@@ -371,9 +360,7 @@ fn push_filters(qb: &mut QueryBuilder<'_, Sqlite>, q: &MediaQuery) {
         _ => {}
     }
     if let Some(code) = q.issue.as_ref().filter(|v| !v.is_empty()) {
-        qb.push(" AND EXISTS (SELECT 1 FROM json_each(media_files.issues) WHERE json_extract(value, '$.code') = ")
-            .push_bind(code.clone())
-            .push(")");
+        qb.push(" AND EXISTS (SELECT 1 FROM json_each(media_files.issues) WHERE json_extract(value, '$.code') = ").push_bind(code.clone()).push(")");
     }
     for (col, op, val) in [
         ("compat_score", ">=", q.min_compat),

@@ -64,11 +64,8 @@ fn split_csv(s: &str) -> Vec<String> {
 
 impl From<&MediaFile> for MediaSummary {
     fn from(m: &MediaFile) -> Self {
-        let resolution = if m.width > 0 || m.height > 0 {
-            ResolutionTier::of(m.width as u32, m.height as u32).label().to_string()
-        } else {
-            String::new()
-        };
+        let resolution =
+            if m.width > 0 || m.height > 0 { ResolutionTier::of(m.width as u32, m.height as u32).label().to_string() } else { String::new() };
         Self {
             id: m.id,
             library_id: m.library_id,
@@ -107,12 +104,7 @@ impl From<&MediaFile> for MediaSummary {
 
 pub async fn list(State(state): State<AppState>, Query(q): Query<MediaQuery>) -> ApiResult<Json<Page<MediaSummary>>> {
     let page = repo::query_media(&state.pool, &q).await?;
-    Ok(Json(Page {
-        items: page.items.iter().map(MediaSummary::from).collect(),
-        total: page.total,
-        page: page.page,
-        page_size: page.page_size,
-    }))
+    Ok(Json(Page { items: page.items.iter().map(MediaSummary::from).collect(), total: page.total, page: page.page, page_size: page.page_size }))
 }
 
 pub async fn ids(State(state): State<AppState>, Query(q): Query<MediaQuery>) -> ApiResult<Json<Value>> {
@@ -132,8 +124,10 @@ async fn facet(state: &AppState, sql: &str) -> sqlx::Result<Vec<Facet>> {
 
 /// Distinct values (with counts) for building filter menus.
 pub async fn facets(State(state): State<AppState>) -> ApiResult<Json<Value>> {
-    let codecs = facet(&state, "SELECT video_codec AS value, COUNT(*) AS count FROM media_files WHERE video_codec != '' GROUP BY 1 ORDER BY 2 DESC").await?;
-    let containers = facet(&state, "SELECT container AS value, COUNT(*) AS count FROM media_files WHERE container != '' GROUP BY 1 ORDER BY 2 DESC").await?;
+    let codecs =
+        facet(&state, "SELECT video_codec AS value, COUNT(*) AS count FROM media_files WHERE video_codec != '' GROUP BY 1 ORDER BY 2 DESC").await?;
+    let containers =
+        facet(&state, "SELECT container AS value, COUNT(*) AS count FROM media_files WHERE container != '' GROUP BY 1 ORDER BY 2 DESC").await?;
     let audio = facet(
         &state,
         "WITH RECURSIVE split(word, rest) AS (
@@ -174,11 +168,8 @@ pub async fn build_detail(state: &AppState, file: MediaFile) -> anyhow::Result<M
     let quality: QualityProfile = settings::load(&state.pool).await?;
     let mut assessment = rating::assess(&file.to_media_info(), file.size as u64, &file.path, &compat, &quality);
     if file.status == "broken" {
-        assessment.summary = format!(
-            "Broken: {}. {}",
-            file.status_reason.clone().unwrap_or_else(|| "the file could not be read".into()),
-            assessment.summary
-        );
+        assessment.summary =
+            format!("Broken: {}. {}", file.status_reason.clone().unwrap_or_else(|| "the file could not be read".into()), assessment.summary);
     }
     let playback: Value = sqlx::query_as::<_, (i64, i64, Option<String>)>(
         "SELECT COUNT(*), COALESCE(SUM(play_method = 'Transcode'), 0), MAX(started_at) FROM playback_events WHERE media_file_id = ?",
@@ -245,9 +236,7 @@ pub struct AnalyzeBody {
 
 /// Analyze a single file synchronously. The file must be inside a library.
 pub async fn analyze_path(State(state): State<AppState>, Json(body): Json<AnalyzeBody>) -> ApiResult<Json<MediaDetail>> {
-    let lib = repo::library_for_path(&state.pool, &body.path)
-        .await?
-        .ok_or_else(|| bad_request("The file must be inside one of your libraries"))?;
+    let lib = repo::library_for_path(&state.pool, &body.path).await?.ok_or_else(|| bad_request("The file must be inside one of your libraries"))?;
     let path = PathBuf::from(&body.path);
     let item = scanner::WorkItem::from_path(path.clone(), Some(lib.id)).ok_or_else(|| not_found("File not found"))?;
     let siblings: Vec<String> = path

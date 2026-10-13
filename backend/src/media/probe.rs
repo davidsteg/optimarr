@@ -44,9 +44,7 @@ impl Probers {
             let text = String::from_utf8_lossy(&out.stdout);
             text.lines().map(str::trim).find(|l| !l.is_empty()).map(|l| l.to_string())
         }
-        let mediainfo = version("mediainfo", "--Version").await.map(|v| {
-            v.trim_start_matches("MediaInfo Command line,").trim().to_string()
-        });
+        let mediainfo = version("mediainfo", "--Version").await.map(|v| v.trim_start_matches("MediaInfo Command line,").trim().to_string());
         let mediainfo = match mediainfo {
             Some(v) if v.is_empty() => Some("mediainfo".into()),
             other => other,
@@ -117,10 +115,7 @@ pub async fn probe_mediainfo(path: &Path) -> Result<MediaInfo> {
 }
 
 pub async fn probe_ffprobe(path: &Path) -> Result<MediaInfo> {
-    let out = run(Command::new("ffprobe")
-        .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
-        .arg(path))
-    .await?;
+    let out = run(Command::new("ffprobe").args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"]).arg(path)).await?;
     let v: Value = serde_json::from_slice(&out).context("invalid ffprobe JSON")?;
     Ok(parse_ffprobe(&v, path))
 }
@@ -154,13 +149,8 @@ fn parse_num(st: &str) -> f64 {
         }
     }
     // "1 920 pixels", "5 / 4"
-    let cleaned: String = st
-        .split(|c: char| c == '/' || c.is_alphabetic())
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
+    let cleaned: String =
+        st.split(|c: char| c == '/' || c.is_alphabetic()).next().unwrap_or("").chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
     cleaned.parse().unwrap_or(0.0)
 }
 
@@ -279,11 +269,9 @@ fn yes(v: &Value, key: &str) -> bool {
 pub fn parse_mediainfo(v: &Value, path: &Path) -> MediaInfo {
     // Either {"media": {"track": [...]}} or an array of those (multiple files).
     let tracks: Vec<Value> = match v {
-        Value::Array(items) => items
-            .iter()
-            .filter_map(|i| i.pointer("/media/track").and_then(Value::as_array).cloned())
-            .max_by_key(|t| t.len())
-            .unwrap_or_default(),
+        Value::Array(items) => {
+            items.iter().filter_map(|i| i.pointer("/media/track").and_then(Value::as_array).cloned()).max_by_key(|t| t.len()).unwrap_or_default()
+        }
         _ => v.pointer("/media/track").and_then(Value::as_array).cloned().unwrap_or_default(),
     };
     let of_type = |t: &'static str| tracks.iter().filter(move |x| s(x, "@type").eq_ignore_ascii_case(t));
@@ -373,10 +361,7 @@ pub fn parse_mediainfo(v: &Value, path: &Path) -> MediaInfo {
 
 fn tag<'a>(stream: &'a Value, key: &str) -> &'a str {
     let Some(tags) = stream.get("tags").and_then(Value::as_object) else { return "" };
-    tags.iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(key))
-        .and_then(|(_, v)| v.as_str())
-        .unwrap_or("")
+    tags.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).and_then(|(_, v)| v.as_str()).unwrap_or("")
 }
 
 fn stream_bitrate(st: &Value) -> u64 {
@@ -418,10 +403,8 @@ pub fn parse_ffprobe(v: &Value, path: &Path) -> MediaInfo {
                     };
                 }
                 let transfer = s(st, "color_transfer");
-                let has_dovi = st
-                    .get("side_data_list")
-                    .and_then(Value::as_array)
-                    .is_some_and(|l| l.iter().any(|d| s(d, "side_data_type").contains("DOVI")));
+                let has_dovi =
+                    st.get("side_data_list").and_then(Value::as_array).is_some_and(|l| l.iter().any(|d| s(d, "side_data_type").contains("DOVI")));
                 let hdr_type = if has_dovi {
                     Some("Dolby Vision".to_string())
                 } else if transfer == "smpte2084" {
@@ -457,11 +440,7 @@ pub fn parse_ffprobe(v: &Value, path: &Path) -> MediaInfo {
             "audio" => {
                 let codec_name = s(st, "codec_name");
                 let profile = s(st, "profile");
-                let codec = if codec_name == "dts" && profile.contains("MA") {
-                    "DTS".to_string()
-                } else {
-                    normalize_audio_codec(codec_name)
-                };
+                let codec = if codec_name == "dts" && profile.contains("MA") { "DTS".to_string() } else { normalize_audio_codec(codec_name) };
                 info.audio.push(AudioTrack {
                     codec,
                     channels: num(st, "channels") as u32,
@@ -528,15 +507,15 @@ mod tests {
     #[test]
     fn parses_ffprobe_json() {
         let v = json!({
-            "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "60.0", "bit_rate": "5000000"},
-            "streams": [
-                {"codec_type": "video", "codec_name": "h264", "codec_tag_string": "avc1", "profile": "High",
-                 "width": 1280, "height": 720, "avg_frame_rate": "24000/1001", "pix_fmt": "yuv420p", "bit_rate": "4800000",
-                 "disposition": {"default": 1, "attached_pic": 0}},
-                {"codec_type": "audio", "codec_name": "aac", "channels": 2, "sample_rate": "48000", "bit_rate": "192000",
-                 "tags": {"language": "eng"}, "disposition": {"default": 1}},
-                {"codec_type": "subtitle", "codec_name": "mov_text", "tags": {"language": "eng"}}
-            ]});
+        "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "60.0", "bit_rate": "5000000"},
+        "streams": [
+            {"codec_type": "video", "codec_name": "h264", "codec_tag_string": "avc1", "profile": "High",
+             "width": 1280, "height": 720, "avg_frame_rate": "24000/1001", "pix_fmt": "yuv420p", "bit_rate": "4800000",
+             "disposition": {"default": 1, "attached_pic": 0}},
+            {"codec_type": "audio", "codec_name": "aac", "channels": 2, "sample_rate": "48000", "bit_rate": "192000",
+             "tags": {"language": "eng"}, "disposition": {"default": 1}},
+            {"codec_type": "subtitle", "codec_name": "mov_text", "tags": {"language": "eng"}}
+        ]});
         let i = parse_ffprobe(&v, Path::new("a.mp4"));
         assert_eq!(i.container, "MP4");
         let vs = i.video.unwrap();

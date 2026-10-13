@@ -146,13 +146,12 @@ fn spawn_scheduler(state: AppState) {
             if general.periodic_scan_hours > 0 {
                 let cutoff = (chrono::Utc::now() - chrono::Duration::hours(general.periodic_scan_hours as i64))
                     .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                let due: Vec<i64> = sqlx::query_scalar(
-                    "SELECT id FROM libraries WHERE enabled = 1 AND (last_scanned_at IS NULL OR last_scanned_at < ?)",
-                )
-                .bind(cutoff)
-                .fetch_all(&state.pool)
-                .await
-                .unwrap_or_default();
+                let due: Vec<i64> =
+                    sqlx::query_scalar("SELECT id FROM libraries WHERE enabled = 1 AND (last_scanned_at IS NULL OR last_scanned_at < ?)")
+                        .bind(cutoff)
+                        .fetch_all(&state.pool)
+                        .await
+                        .unwrap_or_default();
                 libs.extend(due);
             }
             libs.sort();

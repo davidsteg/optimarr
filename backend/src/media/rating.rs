@@ -5,13 +5,7 @@
 use super::model::*;
 use crate::settings::{CompatibilityProfile, QualityProfile};
 
-pub fn assess(
-    info: &MediaInfo,
-    file_size: u64,
-    path: &str,
-    compat: &CompatibilityProfile,
-    quality: &QualityProfile,
-) -> Assessment {
+pub fn assess(info: &MediaInfo, file_size: u64, path: &str, compat: &CompatibilityProfile, quality: &QualityProfile) -> Assessment {
     let mut issues = Vec::new();
     let compat_score = compatibility(info, file_size, compat, &mut issues);
     let quality_score = quality_score(info, quality, &mut issues);
@@ -75,23 +69,8 @@ pub fn container_supported(p: &CompatibilityProfile, container: &str) -> bool {
     lookup(&p.containers, container)
 }
 
-fn issue(
-    issues: &mut Vec<Issue>,
-    code: &str,
-    area: IssueArea,
-    severity: Severity,
-    penalty: i32,
-    message: String,
-    fix: Option<&str>,
-) {
-    issues.push(Issue {
-        code: code.into(),
-        area,
-        severity,
-        message,
-        penalty,
-        fix: fix.map(Into::into),
-    });
+fn issue(issues: &mut Vec<Issue>, code: &str, area: IssueArea, severity: Severity, penalty: i32, message: String, fix: Option<&str>) {
+    issues.push(Issue { code: code.into(), area, severity, message, penalty, fix: fix.map(Into::into) });
 }
 
 fn compatibility(info: &MediaInfo, file_size: u64, p: &CompatibilityProfile, issues: &mut Vec<Issue>) -> i32 {
@@ -140,24 +119,11 @@ fn compatibility(info: &MediaInfo, file_size: u64, p: &CompatibilityProfile, iss
         }
         None => {
             score -= w.unsupported_video_codec;
-            issue(
-                issues,
-                "no_video",
-                C,
-                Severity::Critical,
-                w.unsupported_video_codec,
-                "No video stream could be read".into(),
-                None,
-            );
+            issue(issues, "no_video", C, Severity::Critical, w.unsupported_video_codec, "No video stream could be read".into(), None);
         }
     }
 
-    let mut bad_audio: Vec<&str> = info
-        .audio
-        .iter()
-        .filter(|a| !audio_codec_supported(p, &a.codec))
-        .map(|a| a.codec.as_str())
-        .collect();
+    let mut bad_audio: Vec<&str> = info.audio.iter().filter(|a| !audio_codec_supported(p, &a.codec)).map(|a| a.codec.as_str()).collect();
     bad_audio.dedup();
     if !bad_audio.is_empty() {
         let any_good = info.audio.iter().any(|a| audio_codec_supported(p, &a.codec));
@@ -196,8 +162,7 @@ fn compatibility(info: &MediaInfo, file_size: u64, p: &CompatibilityProfile, iss
         );
     }
 
-    let mut bad_subs: Vec<&str> =
-        info.subtitles.iter().filter(|s| !subtitle_supported(p, &s.format)).map(|s| s.format.as_str()).collect();
+    let mut bad_subs: Vec<&str> = info.subtitles.iter().filter(|s| !subtitle_supported(p, &s.format)).map(|s| s.format.as_str()).collect();
     bad_subs.sort();
     bad_subs.dedup();
     if !bad_subs.is_empty() {
@@ -477,21 +442,14 @@ pub fn channel_label(ch: u32) -> String {
 }
 
 fn summarize(info: &MediaInfo, cs: i32, cv: &str, qs: i32, qv: &str, issues: &[Issue]) -> String {
-    let compat_blockers: Vec<&str> = issues
-        .iter()
-        .filter(|i| i.area == IssueArea::Compatibility && i.severity >= Severity::Warning)
-        .map(|i| i.code.as_str())
-        .collect();
+    let compat_blockers: Vec<&str> =
+        issues.iter().filter(|i| i.area == IssueArea::Compatibility && i.severity >= Severity::Warning).map(|i| i.code.as_str()).collect();
     let mut s = format!("{}. Compatibility {cv} ({cs}/100)", describe(info));
     if !compat_blockers.is_empty() {
         s += &format!(": problems with {}", compat_blockers.join(", ").replace('_', " "));
     }
     s += &format!(". Quality {qv} ({qs}/100)");
-    let q: Vec<&str> = issues
-        .iter()
-        .filter(|i| i.area == IssueArea::Quality && i.severity >= Severity::Warning)
-        .map(|i| i.code.as_str())
-        .collect();
+    let q: Vec<&str> = issues.iter().filter(|i| i.area == IssueArea::Quality && i.severity >= Severity::Warning).map(|i| i.code.as_str()).collect();
     if !q.is_empty() {
         s += &format!(": {}", q.join(", ").replace('_', " "));
     }
@@ -520,7 +478,14 @@ mod tests {
                 bitrate: 7_000_000,
                 hdr_type: Some("HDR10".into()),
             }),
-            audio: vec![AudioTrack { codec: "DTS".into(), channels: 6, sample_rate: 48000, bitrate: 1_509_000, language: "en".into(), ..Default::default() }],
+            audio: vec![AudioTrack {
+                codec: "DTS".into(),
+                channels: 6,
+                sample_rate: 48000,
+                bitrate: 1_509_000,
+                language: "en".into(),
+                ..Default::default()
+            }],
             subtitles: vec![SubtitleTrack { format: "PGS".into(), language: "en".into(), embedded: true, ..Default::default() }],
         }
     }
@@ -542,7 +507,14 @@ mod tests {
                 bitrate: 5_600_000,
                 hdr_type: None,
             }),
-            audio: vec![AudioTrack { codec: "AAC".into(), channels: 6, sample_rate: 48000, bitrate: 384_000, language: "en".into(), ..Default::default() }],
+            audio: vec![AudioTrack {
+                codec: "AAC".into(),
+                channels: 6,
+                sample_rate: 48000,
+                bitrate: 384_000,
+                language: "en".into(),
+                ..Default::default()
+            }],
             subtitles: vec![],
         }
     }

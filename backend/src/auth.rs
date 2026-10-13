@@ -48,7 +48,7 @@ pub async fn init(pool: &SqlitePool, env_key: Option<String>) -> anyhow::Result<
     if s.api_key.is_empty() {
         s.api_key = generate_key();
         crate::settings::save(pool, &s).await?;
-        tracing::info!("generated API key (see Settings > General)");
+        tracing::info!("generated API key (see Settings > Security)");
     }
     if let Some(k) = env_key.filter(|k| !k.is_empty()) {
         s.api_key = k;
@@ -110,8 +110,8 @@ pub async fn key_required(state: &AppState, peer: Option<SocketAddr>) -> bool {
 
 pub async fn middleware(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
-    let protected = (path.starts_with("/api/") || path == "/mcp" || path.starts_with("/mcp/"))
-        && !matches!(path, "/api/system/health" | "/api/system/auth");
+    let protected =
+        (path.starts_with("/api/") || path == "/mcp" || path.starts_with("/mcp/")) && !matches!(path, "/api/system/health" | "/api/system/auth");
     if !protected {
         return next.run(req).await;
     }
@@ -125,8 +125,7 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
     if ok {
         next.run(req).await
     } else {
-        (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Unauthorized: send the API key in the X-Api-Key header"})))
-            .into_response()
+        (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Unauthorized: send the API key in the X-Api-Key header"}))).into_response()
     }
 }
 
