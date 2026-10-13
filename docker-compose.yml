@@ -1,27 +1,18 @@
-version: '3.8'
-
 services:
   optimarr:
-    image: bridgemill/optimarr:latest
+    image: ghcr.io/davidsteg/optimarr:latest
+    build: .
     container_name: optimarr
     ports:
-      - "5000:8080"
+      - "8080:8080"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      # - OPTIMARR_API_KEY=change-me   # fix the API key instead of generating one
     volumes:
-      - /mnt/d/Nextcloud/Project/Optimarr/config:/app/config
-      - /mnt/d/Nextcloud/Project/Optimarr/data:/app/data
-      - /mnt/d/Nextcloud/Project/Optimarr/logs:/app/logs
-      - /mnt/d/Nextcloud/Project/Optimarr/videos:/videos:ro
-      - /mnt/host/wsl/Ubuntu/mnt/media:/media:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config:ro        # only read to import Optimarr 1.x settings
+      - /path/to/media:/media:ro       # your movies and series
     restart: unless-stopped
-    networks:
-      - servarr-network
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/system/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-networks:
-  servarr-network:
-    driver: bridge

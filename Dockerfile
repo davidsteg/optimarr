@@ -1,75 +1,51 @@
-# Build stage
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+# syntax=docker/dockerfile:1
+
+# ---- web UI ----
+FROM node:22-bookworm-slim AS ui
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# ---- server ----
+FROM rust:1-bookworm AS server
 WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY backend ./backend
+COPY --from=ui /src/frontend/build ./frontend/build
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --locked && cp target/release/optimarr /usr/local/bin/optimarr
 
-# Copy csproj and restore dependencies (this layer will be cached if csproj doesn't change)
-COPY optimarr.csproj .
-RUN dotnet restore
+# ---- runtime ----
+FROM debian:bookworm-slim
+LABEL org.opencontainers.image.title="Optimarr" \
+      org.opencontainers.image.description="Media library compatibility and quality analyzer for Sonarr, Radarr and Jellyfin" \
+      org.opencontainers.image.source="https://github.com/davidsteg/optimarr" \
+      org.opencontainers.image.licenses="MIT"
 
-# Copy everything else and build
-COPY . .
-RUN rm -rf ./Optimarr.Tests
-RUN dotnet publish -c Release -o /app/publish --no-restore
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends mediainfo ca-certificates curl gosu tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1000 optimarr && useradd -u 1000 -g optimarr -M -s /usr/sbin/nologin optimarr \
+    && mkdir -p /app/config /app/data /app/logs
 
-# Runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
-
-# Add labels for Docker Hub metadata
-LABEL org.opencontainers.image.title="Optimarr"
-LABEL org.opencontainers.image.description="A web-based application for analyzing video files to determine their compatibility with media server clients"
-LABEL org.opencontainers.image.vendor="Optimarr"
-LABEL org.opencontainers.image.version="1.2.2"
-LABEL org.opencontainers.image.url="https://github.com/bridgemill-ch/optimarr"
-LABEL org.opencontainers.image.documentation="https://github.com/bridgemill-ch/optimarr/blob/main/README.md"
-LABEL org.opencontainers.image.source="https://github.com/bridgemill-ch/optimarr"
-LABEL org.opencontainers.image.licenses="MIT"
+COPY --from=server /usr/local/bin/optimarr /usr/local/bin/optimarr
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /app
-
-# Install MediaInfo CLI tool, curl for healthcheck, and gosu for user switching
-# Create non-root user and directories in a single layer
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        mediainfo \
-        ca-certificates \
-        curl \
-        gosu && \
-    rm -rf /var/lib/apt/lists/* && \
-    apt-get clean && \
-    groupadd -r optimarr && \
-    useradd -r -g optimarr -u 1000 optimarr && \
-    mkdir -p /app/config /app/data /app/logs && \
-    mediainfo --Version
-
-# Copy published app
-COPY --from=build /app/publish .
-
-# Ensure VERSION is present at runtime for /api/system/version
-COPY VERSION /app/VERSION
-
-# Copy appsettings.json as default configuration (stored outside config dir to avoid being hidden by mounts)
-# Entrypoint will copy this to /app/config/appsettings.json if the mounted config folder is empty
-COPY appsettings.json /app/appsettings.json.default
-
-# Copy entrypoint script (needs to be owned by root to run as root initially)
-COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/
-
-# Set ownership of app files (entrypoint stays root-owned)
-RUN chown -R optimarr:optimarr /app
-
-# Expose port
+ENV OPTIMARR_BIND=0.0.0.0:8080 \
+    OPTIMARR_DATA_DIR=/app/data \
+    OPTIMARR_CONFIG_DIR=/app/config \
+    OPTIMARR_LOG_DIR=/app/logs \
+    PUID=1000 \
+    PGID=1000
 EXPOSE 8080
+VOLUME ["/app/data", "/app/logs"]
 
-# Set environment variables
-ENV ASPNETCORE_URLS=http://+:8080
-ENV ASPNETCORE_ENVIRONMENT=Production
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8080/api/system/health || exit 1
 
-# Add migration-aware healthcheck:
-# - During migration (checking/creating/migrating), report success to avoid false negatives
-# - Once migration is complete, require /api/system/health to be healthy
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD migration_status=$(curl --silent --show-error --fail http://localhost:8080/api/system/migration | grep -o '"status":"[^"]*"' | cut -d '"' -f4 || true); if [ "$migration_status" = "completed" ]; then curl --silent --show-error --fail http://localhost:8080/api/system/health > /dev/null; elif [ -z "$migration_status" ] || [ "$migration_status" = "error" ]; then exit 1; else exit 0; fi
-
-# Use entrypoint script to fix permissions, then switch to non-root user
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh", "dotnet", "optimarr.dll"]
-
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
+CMD ["optimarr"]
