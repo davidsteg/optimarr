@@ -38,7 +38,7 @@ database, and live progress in the browser.
 ```yaml
 services:
   optimarr:
-    image: ghcr.io/davidsteg/optimarr:latest
+    image: davidsteg/optimarr:latest
     container_name: optimarr
     ports:
       - "8080:8080"
@@ -86,7 +86,8 @@ The fix queue writes to your media folders, so mount them without `:ro` and turn
 ## Releases
 
 Every version is a GitHub Release with notes from [CHANGELOG.md](CHANGELOG.md) and an amd64
-image: `ghcr.io/davidsteg/optimarr:<version>` and `:latest`.
+image on Docker Hub, `davidsteg/optimarr:<version>` and `:latest`. The same image is on GHCR as
+`ghcr.io/davidsteg/optimarr`.
 
 To cut a release: bump the version in `VERSION`, `backend/Cargo.toml` and `frontend/package.json`,
 add a `## [x.y.z]` section to `CHANGELOG.md`, merge to master, then tag it:

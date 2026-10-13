@@ -13,7 +13,7 @@ start.
 
 ### Upgrading from 1.x
 
-1. Switch the image to `ghcr.io/davidsteg/optimarr:2.0.0` and keep your `data` and `config`
+1. Switch the image to `davidsteg/optimarr:2.0.0` and keep your `data` and `config`
    volumes. The port inside the container is still 8080.
 2. On first start, `config/appsettings.json` and `data/optimarr.db` are imported into a new
    `data/optimarr2.db`. The old files are opened read-only and left in place, so you can roll back.
@@ -28,8 +28,8 @@ start.
 - Settings are no longer read from `appsettings.json` after the first import; edit them in the UI.
 - The compatibility score is now 0–100 per file with configurable weights, and there is a separate
   0–100 quality score, so 1.x ratings and thresholds do not carry over one to one.
-- The Docker image moved from Docker Hub (`bridgemill/optimarr`) to GHCR
-  (`ghcr.io/davidsteg/optimarr`). `PUID` and `PGID` set the user the server runs as.
+- The Docker image moved from `bridgemill/optimarr` to `davidsteg/optimarr` on Docker Hub, also
+  published to GHCR as `ghcr.io/davidsteg/optimarr`. `PUID` and `PGID` set the user the server runs as.
 
 ### Added
 
@@ -58,7 +58,7 @@ start.
   rescans for network mounts, and live progress in the browser.
 - Jellyfin playback history (Playback Reporting plugin) with transcode reasons per client and user.
 - Sonarr and Radarr: root folder sync, file matching, redownload, and import webhooks.
-- GitHub Releases with an amd64 Docker image for every version tag.
+- GitHub Releases with an amd64 Docker image on Docker Hub and GHCR for every version tag.
 
 ### Changed
 
