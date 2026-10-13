@@ -171,6 +171,45 @@
 		}
 	}
 
+	async function fixSelected() {
+		if (selected.size > 1000) {
+			toasts.error('Select at most 1000 files to fix at once');
+			return;
+		}
+		busy = true;
+		try {
+			const r = await api.post<{ queued: number; results: { queued: boolean; message?: string }[] }>('/fixes', { ids: [...selected] });
+			const skipped = r.results.length - r.queued;
+			if (r.queued) toasts.success(`Queued ${r.queued} fix(es)${skipped ? `, ${skipped} skipped (nothing to fix or already queued)` : ''}`);
+			else toasts.error(r.results[0]?.message ?? 'Nothing to fix');
+			selected = new Set();
+		} catch (e) {
+			toasts.error(e);
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function upgradeSelected() {
+		if (selected.size > 200) {
+			toasts.error('Select at most 200 files to search at once');
+			return;
+		}
+		busy = true;
+		try {
+			const r = await api.post<{ searched: number; failed: number; results: { success: boolean; message: string }[] }>('/upgrades/search', {
+				ids: [...selected]
+			});
+			if (r.failed === 0) toasts.success(`Searching for better releases of ${r.searched} file(s)`);
+			else toasts.error(`${r.searched} searched, ${r.failed} failed: ${r.results.find((x) => !x.success)?.message ?? ''}`);
+			selected = new Set();
+		} catch (e) {
+			toasts.error(e);
+		} finally {
+			busy = false;
+		}
+	}
+
 	const labels: Record<string, string> = {
 		libraryId: 'Library',
 		compat: 'Compatibility',
@@ -326,6 +365,8 @@
 			{/if}
 			<span class="grow"></span>
 			<button class="btn sm" disabled={busy} onclick={rescanSelected}><Icon name="refresh" size={14} />Re-analyse</button>
+			<button class="btn sm" disabled={busy} onclick={fixSelected}><Icon name="wrench" size={14} />Queue fixes</button>
+			<button class="btn sm" disabled={busy} onclick={upgradeSelected}><Icon name="search" size={14} />Search upgrades</button>
 			<button class="btn sm danger" disabled={busy} onclick={redownloadSelected}><Icon name="download" size={14} />Redownload</button>
 			<button class="btn ghost sm" onclick={() => (selected = new Set())}>Clear</button>
 		</div>

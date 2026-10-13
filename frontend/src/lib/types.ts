@@ -109,6 +109,75 @@ export interface MediaDetail {
 	};
 	playback: { plays: number; transcodes: number; lastPlayed: string | null };
 	servarrRemotePath: string | null;
+	upgradeRequestedAt: string | null;
+	devices: DeviceVerdict[];
+	savings: SavingsEstimate | null;
+	fix: Fix | null;
+}
+
+export type DeviceOutcome = 'directPlay' | 'directStream' | 'transcode';
+
+export interface DeviceVerdict {
+	id: number;
+	name: string;
+	outcome: DeviceOutcome;
+	reasons: string[];
+	subtitleNote: string | null;
+}
+
+export interface DeviceCapabilities {
+	videoCodecs: Record<string, boolean>;
+	audioCodecs: Record<string, boolean>;
+	containers: Record<string, boolean>;
+	subtitleFormats: Record<string, boolean>;
+	bitDepths: Record<string, boolean>;
+	hdr: boolean;
+	maxWidth: number;
+	maxBitrateMbps: number;
+}
+
+export interface Device {
+	id: number;
+	name: string;
+	enabled: boolean;
+	profile: DeviceCapabilities;
+	createdAt: string;
+}
+
+export interface SavingsEstimate {
+	target: 'hevc' | 'av1';
+	currentSize: number;
+	estimatedSize: number;
+	savings: number;
+	targetVideoBitrate: number;
+}
+
+export interface Fix {
+	id: number;
+	mediaFileId: number | null;
+	path: string;
+	status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+	command: string;
+	outputPath: string;
+	finalPath: string | null;
+	progress: number;
+	error: string | null;
+	sizeBefore: number | null;
+	sizeAfter: number | null;
+	createdAt: string;
+	startedAt: string | null;
+	finishedAt: string | null;
+}
+
+/** Compact file summary used by the agent-style endpoints (upgrades, savings). */
+export interface FileBrief {
+	id: number;
+	title: string;
+	path: string;
+	compatibility: { score: number; verdict: string };
+	quality: { score: number; verdict: string };
+	status: string;
+	mainIssues: string[];
 }
 
 export interface Page<T> {

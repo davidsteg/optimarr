@@ -1,59 +1,79 @@
 # Changelog
-## Optimarr - Media Optimization Platform
 
-All notable changes to this project will be documented in this file.
+All notable changes to Optimarr are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each `## [x.y.z]` section becomes the
+notes of the GitHub Release for tag `vx.y.z`.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [2.0.0] - 2026-10-13
 
----
+Optimarr 2 is a complete rewrite in Rust with a new web UI. It is a single binary with the UI
+built in, keeps its settings in the database, and imports your 1.x settings and analysis on first
+start.
 
-## [Unreleased]
+### Upgrading from 1.x
 
-### Fixed
-- Fixed migration banner refresh behavior in `wwwroot/js/migration.js`.
-  - Banner no longer shows during transient `checking` status on page refresh.
-  - Polling still continues during `checking` so active migrations (`creating`/`migrating`) are detected and displayed correctly.
-- Fixed broken-only browse filtering regression across API + UI guardrails.
-  - Added a final server-side response-time broken filter guard in `Controllers/LibraryController.cs` (`/api/library/videos`) so transformed/deduplicated results remain strict for `isBroken=true`.
-  - Added client-side strict broken detection fallback in `wwwroot/js/browse.js` (`isBroken`/`IsBroken`) so broken cards and broken-only rendering stay accurate if payload casing differs.
-- Improved permission-tolerant scan handling in `Services/LibraryScannerService.cs`.
-  - Replaced direct `FileInfo(...).Length` reads with safe fallback file-size probes so restricted/locked files do not trigger secondary scanner failures while saving analysis/failure records.
-  - Added a relaxed share-mode size fallback (`FileShare.ReadWrite | FileShare.Delete`) to try reading file metadata despite restrictive access setups.
-- Improved scan failure messaging for permission-vs-policy clarity.
-  - `Services/LibraryScannerService.cs` now distinguishes path allowlist policy blocks from filesystem access failures in client-safe failed-file messages.
-  - UI/API failure surfaces now report `File path is outside configured library roots.` for whitelist violations instead of the generic permission-restricted message.
-- Reduced first-attempt false negatives during media scan analysis.
-  - `Services/LibraryScannerService.cs` now retries transient analysis/report failures up to 3 attempts before classifying a file as failed/broken.
-  - Report generation failures no longer mark already-successful analysis results as broken; scan stores analysis with fallback report text.
-- Improved MediaInfo parsing robustness to reduce false "codec/container missing" broken classification.
-  - `Services/VideoAnalyzerService.cs` now resolves tracks case-insensitively and across XML namespace variants.
-  - Container fallback from file extension now applies even when MediaInfo General track is missing/partial.
-- Reduced false "invalid resolution (width/height=0)" broken classifications.
-  - `Services/VideoAnalyzerService.cs` now parses MediaInfo dimension values with units/separators (e.g. `1 920 pixels`) into numeric width/height before validation.
-- Improved broken-file recovery and conservative resolution handling in scan persistence.
-  - `Services/LibraryScannerService.cs` now re-analyzes and updates existing broken records during scans instead of always skipping existing entries.
-  - Files with missing width/height are no longer auto-marked broken when codec/container/duration/file-size metadata is otherwise valid.
-- Aligned manual/rescan controller paths with conservative broken-resolution logic.
-  - `Controllers/LibraryController.cs` now avoids setting `Invalid video resolution (width or height is 0)` when other core metadata is valid, matching scanner-side behavior.
-- Fixed broken-reason ordering so duration/file-size failures are not mislabeled as resolution failures.
-  - Validation order now checks codec/container, duration, and file size before width/height in both scanner and controller reanalysis flows.
-- Hardened duration extraction for valid files that still returned duration `0`.
-  - `Services/VideoAnalyzerService.cs` now falls back to `mediainfo --Inform=General;%Duration%` when XML duration parsing fails.
-  - Scanner/controller broken classification now treats missing duration as non-broken when codec/container/resolution/file-size metadata is otherwise valid.
-- Added targeted fallback for `mediainfo` `media:null`/missing-media responses.
-  - `Services/VideoAnalyzerService.cs` now retries extraction with `--Output=JSON` using normalized Unicode file paths before failing metadata extraction.
-  - This alternate invocation strategy reduces false broken classification when XML mode returns no track payload.
-- Fixed primary `mediainfo` path handling for Unicode filenames on Linux mounts.
-  - `Services/VideoAnalyzerService.cs` now uses the original file path for primary XML extraction and applies normalized path variants only in fallback retries.
-- Deepened MediaInfo fallback selection for malformed multi-entry payloads.
-  - `Services/VideoAnalyzerService.cs` now selects the best XML `media` element by track quality instead of taking the first (which can be empty).
-  - JSON fallback now supports both object and array root payloads and picks the best track set before parsing metadata.
-- Relaxed duration-only broken classification to avoid false positives on valid files.
-  - Scanner and controller reanalysis now require only missing codec/container or zero file size (not missing resolution) before assigning `Invalid duration (duration is 0 or negative)`.
-- Corrected broken reason mapping for analyzer-empty metadata cases.
-  - Scanner/controller now report `Media metadata extraction failed (empty track data returned by analyzer)` when codec/duration/resolution/audio are all missing, instead of incorrectly labeling such cases as duration-only failures.
-  - Aligned `videos/rescan-broken` classification logic with the main rescan/scanner decision order.
+1. Switch the image to `ghcr.io/davidsteg/optimarr:2.0.0` and keep your `data` and `config`
+   volumes. The port inside the container is still 8080.
+2. On first start, `config/appsettings.json` and `data/optimarr.db` are imported into a new
+   `data/optimarr2.db`. The old files are opened read-only and left in place, so you can roll back.
+3. Mount your media at the same paths as before so imported results still match.
+4. Find the API key under **Settings → Security** (or set `OPTIMARR_API_KEY`). Agents and scripts
+   now send it as `X-Api-Key`.
+
+### Breaking changes
+
+- The REST API is new. Scripts using 1.x endpoints (`/api/library/*`, `/api/analysis/*`,
+  `/api/servarr/*`) must move to the new endpoints or to the stable agent API in `docs/API.md`.
+- Settings are no longer read from `appsettings.json` after the first import; edit them in the UI.
+- The compatibility score is now 0–100 per file with configurable weights, and there is a separate
+  0–100 quality score, so 1.x ratings and thresholds do not carry over one to one.
+- The Docker image moved from Docker Hub (`bridgemill/optimarr`) to GHCR
+  (`ghcr.io/davidsteg/optimarr`). `PUID` and `PGID` set the user the server runs as.
+
+### Added
+
+- **Two scores per file.** Compatibility (will it direct-play?) and quality (bitrate per pixel,
+  resolution, codec, HDR, audio), each with issues, a fix for every issue, and one ffmpeg command
+  that resolves all fixable compatibility problems.
+- **Per-device playback profiles.** Describe each client (templates for web browsers, Apple TV,
+  Android TV / Shield and smart TVs). Every file shows direct play, remux or transcode per device,
+  and the Improve page totals it per device with the most common reasons.
+- **Fix queue.** Queue the suggested ffmpeg fix for one or many files. A worker runs them one at a
+  time, swaps the result in (keeping the original as `.orig` by default), re-analyzes it and asks
+  Sonarr/Radarr to rescan. Off by default; needs writable media folders.
+- **Upgrade finder.** Lists low-quality files linked to Sonarr or Radarr and asks them to search for
+  a better release without deleting the current file, by hand or automatically on a schedule.
+- **Disk savings estimate.** How much space re-encoding to HEVC or AV1 would save, per file and in
+  total, with the biggest wins first.
+- **Language checks.** Preferred audio and subtitle languages are checked, and subtitles that only
+  exist as images (PGS, VobSub) are flagged because they force a transcode.
+- **Notifications.** Discord, ntfy or any webhook, for new broken or poor files, finished or failed
+  fixes, and automatic upgrade searches.
+- **Agent API.** A small, stable JSON API under `/api/agent/` for AI agents and MCP servers: library
+  overview, file search, per-file reports (by id, path or title), most-transcoded files, device
+  summaries, savings, upgrade candidates, the fix queue, notifications, and rescan, upgrade, fix and
+  redownload actions. Documented in `docs/API.md`.
+- Incremental scans that skip unchanged files, a file watcher for new and changed files, periodic
+  rescans for network mounts, and live progress in the browser.
+- Jellyfin playback history (Playback Reporting plugin) with transcode reasons per client and user.
+- Sonarr and Radarr: root folder sync, file matching, redownload, and import webhooks.
+- GitHub Releases with a multi-arch (amd64, arm64) Docker image for every version tag.
+
+### Changed
+
+- Rewritten from ASP.NET to Rust (Axum, Tokio, SQLite) with a SvelteKit UI. The Docker image is a
+  slim Debian image with MediaInfo and ffmpeg.
+- API key auth is required for requests from outside your network by default (configurable).
+
+### Removed
+
+- The ASP.NET application, its jQuery UI, `appsettings.json` configuration and the 1.x docs.
+
+### Security
+
+- The 1.x repository contained `config/appsettings.json` with real Sonarr and Jellyfin API keys. The
+  file is removed, but it remains in git history: regenerate those keys.
 
 ## [1.2.2] - 2026-03-02
 
@@ -584,97 +604,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Entity Framework Core
 - Vanilla JavaScript frontend
 
----
-
-## Version History
-
-| Version | Date | Story ID | Description |
-|---------|------|----------|-------------|
-| 1.1.3 | 2025-01-09 | - | Database migration fixes and warning popup improvements |
-| 1.1.2 | 2025-01-XX | STORY-002 | Progress bar for video matching with Sonarr/Radarr |
-| 1.1.1 | 2025-01-XX | - | UI Bug Fix: Checkbox overlap with tags |
-| 1.1.0 | 2025-01-XX | STORY-001 | Servarr Video Matching Integration |
-| 1.0.0 | 2025-01-XX | STORY-000 | Initial Release |
-
----
-
-## Story Tracking
-
-### Completed Stories
-
-**STORY-002: Progress Bar for Video Matching**
-- Status: ✅ Completed
-- Started: 2025-01-XX
-- Completed: 2025-01-XX
-- Developer: AI Assistant
-- Description: Added real-time progress tracking for video matching operations with Sonarr/Radarr, showing processed/total count, percentage, and current file being processed
-- Database Changes: No database changes
-- Migration Script: None required
-- UI Changes: Progress display in status span, real-time updates, completion messages
-- API Changes: Modified `/api/servarr/match-videos` to return matchId, added `/api/servarr/match-videos/progress/{matchId}` endpoint
-- New Services: `VideoMatchingProgressService` for progress tracking
-
-**STORY-001: Servarr Video Matching Integration**
-- Status: ✅ Completed
-- Started: 2025-01-XX
-- Completed: 2025-01-XX
-- Developer: AI Assistant
-- Description: Integrate Sonarr/Radarr metadata with video analysis results, display icons in UI, and combine all information sources (MediaInfo, Sonarr, Radarr, Jellyfin) in media info modal
-- Database Changes: Added 10 new nullable fields to VideoAnalyses table
-- Migration Script: `Data/Migrations/AddServarrFields.sql`
-- UI Changes: Browse grid icons, media info modal sections, settings buttons
-- API Changes: 2 new endpoints for video matching
-
-**STORY-000: Initial Release**
-- Status: ✅ Completed
-- Started: 2025-01-XX
-- Completed: 2025-01-XX
-- Developer: Initial Development
-- Description: Core application functionality and basic integrations
-
-### Pending Stories
-
-_No pending stories at this time_
-
----
-
-## Migration Guide
-
-### Upgrading from 1.0.0 to 1.1.0
-
-1. **Backup your database** (`data/optimarr.db`)
-2. **Run the migration script**:
-   ```bash
-   sqlite3 data/optimarr.db < Data/Migrations/AddServarrFields.sql
-   ```
-   Or manually execute the SQL commands from `Data/Migrations/AddServarrFields.sql`
-3. **Restart the application**
-4. **Match existing videos**:
-   - Go to Settings → Sonarr/Radarr
-   - Click "Match Videos" button to match existing videos with Servarr data
-   - Or videos will be automatically matched after syncing libraries
-
-### Database Schema Changes
-
-**Table: VideoAnalyses**
-
-New columns (all nullable):
-- `ServarrType` TEXT
-- `SonarrSeriesId` INTEGER
-- `SonarrSeriesTitle` TEXT
-- `SonarrEpisodeId` INTEGER
-- `SonarrEpisodeNumber` INTEGER
-- `SonarrSeasonNumber` INTEGER
-- `RadarrMovieId` INTEGER
-- `RadarrMovieTitle` TEXT
-- `RadarrYear` INTEGER
-- `ServarrMatchedAt` TEXT
-
----
-
-## Notes
-
-- Version numbers follow Semantic Versioning (MAJOR.MINOR.PATCH)
-- Stories are tracked with unique IDs (STORY-XXX)
-- All database changes require migration scripts
-- UI version display is automatically updated from version file
