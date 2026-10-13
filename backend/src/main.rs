@@ -2,14 +2,18 @@ mod api;
 mod auth;
 mod background;
 mod db;
+mod devices;
+mod fixer;
 mod integrations;
 mod jobs;
 mod legacy;
 mod media;
+mod notify;
 mod repo;
 mod scanner;
 mod settings;
 mod state;
+mod upgrades;
 mod web;
 
 use std::net::SocketAddr;

@@ -26,7 +26,7 @@ LABEL org.opencontainers.image.title="Optimarr" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends mediainfo ca-certificates curl gosu tini \
+    && apt-get install -y --no-install-recommends mediainfo ffmpeg ca-certificates curl gosu tini \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 optimarr && useradd -u 1000 -g optimarr -M -s /usr/sbin/nologin optimarr \
     && mkdir -p /app/config /app/data /app/logs

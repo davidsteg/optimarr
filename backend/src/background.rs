@@ -16,6 +16,8 @@ use crate::state::AppState;
 pub fn spawn_all(state: AppState) {
     spawn_watcher(state.clone());
     spawn_scheduler(state.clone());
+    crate::fixer::spawn_worker(state.clone());
+    crate::upgrades::spawn_background(state.clone());
     crate::integrations::jellyfin::spawn_background(state);
 }
 

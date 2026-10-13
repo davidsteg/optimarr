@@ -126,6 +126,14 @@ pub struct QualityProfile {
     /// Minimum bits per pixel per frame before a file is considered starved (H.264 baseline;
     /// modern codecs get 60% of this).
     pub min_bits_per_pixel: f64,
+    /// Languages every file should have an audio track in (any one of them). Empty disables the check.
+    pub preferred_audio_languages: Vec<String>,
+    /// Languages every file should have subtitles in (any one of them). Empty disables the check.
+    pub preferred_subtitle_languages: Vec<String>,
+    pub penalty_missing_audio_language: i32,
+    pub penalty_missing_subtitle_language: i32,
+    /// Applied when the only subtitles in a preferred language are image based (PGS, VobSub).
+    pub penalty_image_subtitles: i32,
     pub thresholds: QualityThresholds,
 }
 
@@ -156,6 +164,11 @@ impl Default for QualityProfile {
             penalty_low_audio_bitrate: 5,
             penalty_sdr_4k: 5,
             min_bits_per_pixel: 0.06,
+            preferred_audio_languages: Vec::new(),
+            preferred_subtitle_languages: Vec::new(),
+            penalty_missing_audio_language: 15,
+            penalty_missing_subtitle_language: 5,
+            penalty_image_subtitles: 5,
             thresholds: QualityThresholds::default(),
         }
     }

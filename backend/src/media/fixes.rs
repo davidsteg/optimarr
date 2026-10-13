@@ -14,8 +14,34 @@ fn is_text_sub(format: &str) -> bool {
     matches!(format, "SRT" | "VTT" | "ASS" | "SSA" | "MOV_TEXT" | "TTML")
 }
 
+/// An ffmpeg invocation: `args` excludes the program name; `input` and `output` appear in it verbatim.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FfmpegPlan {
+    pub args: Vec<String>,
+    pub output: String,
+    pub drops_image_subtitles: bool,
+}
+
+impl FfmpegPlan {
+    /// Copy-pasteable shell command.
+    pub fn command(&self, input: &str) -> String {
+        let mut cmd = std::iter::once("ffmpeg".to_string())
+            .chain(self.args.iter().map(|a| if a == input || *a == self.output { shell_quote(a) } else { a.clone() }))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if self.drops_image_subtitles {
+            cmd.push_str("  # image-based subtitles dropped; extract with OCR (e.g. Subtitle Edit) if needed");
+        }
+        cmd
+    }
+}
+
 /// Returns `None` when nothing needs to change.
 pub fn ffmpeg_command_for(info: &MediaInfo, p: &CompatibilityProfile, issues: &[Issue], input: &str) -> Option<String> {
+    ffmpeg_plan_for(info, p, issues, input).map(|plan| plan.command(input))
+}
+
+pub fn ffmpeg_plan_for(info: &MediaInfo, p: &CompatibilityProfile, issues: &[Issue], input: &str) -> Option<FfmpegPlan> {
     let fixable = issues.iter().any(|i| {
         i.area == IssueArea::Compatibility
             && matches!(i.code.as_str(), "video_codec" | "bit_depth" | "codec_tag" | "audio_codec" | "container" | "subtitle_format" | "fast_start")
@@ -36,7 +62,7 @@ pub fn ffmpeg_command_for(info: &MediaInfo, p: &CompatibilityProfile, issues: &[
     let stem = input.rsplit_once('.').map(|(s, _)| s).unwrap_or(input);
     let output = format!("{stem}.optimized.{ext}");
 
-    let mut args: Vec<String> = vec!["ffmpeg".into(), "-hide_banner".into(), "-i".into(), shell_quote(input)];
+    let mut args: Vec<String> = vec!["-hide_banner".into(), "-i".into(), input.to_string()];
     args.extend(["-map".into(), "0:v:0".into(), "-map".into(), "0:a?".into()]);
 
     // Video
@@ -97,13 +123,8 @@ pub fn ffmpeg_command_for(info: &MediaInfo, p: &CompatibilityProfile, issues: &[
     if ext == "mp4" {
         args.extend(["-movflags".into(), "+faststart".into()]);
     }
-    args.push(shell_quote(&output));
-
-    let mut cmd = args.join(" ");
-    if embedded.iter().any(|s| s.is_image_based()) {
-        cmd.push_str("  # image-based subtitles dropped; extract with OCR (e.g. Subtitle Edit) if needed");
-    }
-    Some(cmd)
+    args.push(output.clone());
+    Some(FfmpegPlan { args, output, drops_image_subtitles: embedded.iter().any(|s| s.is_image_based()) })
 }
 
 #[cfg(test)]

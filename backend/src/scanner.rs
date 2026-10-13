@@ -47,6 +47,7 @@ pub async fn start_library_scan(state: &AppState, library_id: i64, full: bool) -
         st.jobs.finish(&job, res).await;
         st.jobs.emit(Event::MediaChanged);
         st.jobs.emit(Event::LibrariesChanged);
+        crate::notify::new_problems(&st, &job.started_at).await;
     });
     Ok(id)
 }
@@ -299,6 +300,7 @@ pub async fn start_path_analysis(state: &AppState, paths: Vec<PathBuf>, title: &
         let res = analyze_items(&st, &job, items).await;
         st.jobs.finish(&job, res).await;
         st.jobs.emit(Event::MediaChanged);
+        crate::notify::new_problems(&st, &job.started_at).await;
     });
     Ok(Some(id))
 }
