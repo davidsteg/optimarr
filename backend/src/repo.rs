@@ -265,6 +265,17 @@ pub async fn library_for_path(pool: &SqlitePool, path: &str) -> sqlx::Result<Opt
     Ok(libs.into_iter().filter(|l| path_is_under(path, &l.path)).max_by_key(|l| l.path.len()))
 }
 
+/// Attach files that were analyzed before the library existed (e.g. legacy imports).
+pub async fn attach_orphan_files(pool: &SqlitePool, library_id: i64, root: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE media_files SET library_id = ? WHERE library_id IS NULL AND (path = ? OR path LIKE ? ESCAPE '\\')")
+        .bind(library_id)
+        .bind(root)
+        .bind(format!("{}/%", root.replace('%', "\\%").replace('_', "\\_")))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub fn path_is_under(path: &str, root: &str) -> bool {
     let root = root.trim_end_matches(['/', '\\']);
     if root.is_empty() {

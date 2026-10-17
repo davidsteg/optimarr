@@ -60,13 +60,7 @@ pub async fn create(State(state): State<AppState>, Json(body): Json<NewLibrary>)
             sqlx::Error::Database(d) if d.is_unique_violation() => ApiError::Conflict(format!("{path} is already a library")),
             _ => e.into(),
         })?;
-    // Attach files that were analyzed before the library existed (e.g. legacy imports).
-    sqlx::query("UPDATE media_files SET library_id = ? WHERE library_id IS NULL AND (path = ? OR path LIKE ? ESCAPE '\\')")
-        .bind(id)
-        .bind(&path)
-        .bind(format!("{}/%", path.replace('%', "\\%").replace('_', "\\_")))
-        .execute(&state.pool)
-        .await?;
+    repo::attach_orphan_files(&state.pool, id, &path).await?;
     state.jobs.emit(Event::LibrariesChanged);
     let job = if body.scan { Some(scanner::start_library_scan(&state, id, false).await?) } else { None };
     Ok(Json(json!({ "id": id, "jobId": job })))

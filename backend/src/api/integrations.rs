@@ -31,8 +31,8 @@ pub async fn test_servarr(State(state): State<AppState>, Path(k): Path<String>, 
 }
 
 pub async fn sync_libraries(State(state): State<AppState>, Path(k): Path<String>) -> ApiResult<Json<Value>> {
-    let n = servarr::sync_root_folders(&state, kind(&k)?).await.map_err(|e| bad_request(format!("{e:#}")))?;
-    Ok(Json(json!({ "synced": n })))
+    let r = servarr::sync_root_folders(&state, kind(&k)?).await.map_err(|e| bad_request(format!("{e:#}")))?;
+    Ok(Json(json!({ "synced": r.added.len(), "added": r.added, "existing": r.existing, "skipped": r.skipped })))
 }
 
 pub async fn match_files(State(state): State<AppState>) -> ApiResult<Json<Value>> {

@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 
 use crate::db::now;
 use crate::jobs::{Event, JobHandle};
+use crate::repo;
+use crate::scanner;
 use crate::settings::{self, map_path, unmap_path, RadarrSettings, ServarrSettings, SonarrSettings};
 use crate::state::AppState;
 
@@ -270,27 +272,63 @@ pub enum Match {
 // ------------------------------------------------------------------ jobs
 
 /// Create/refresh libraries from Sonarr/Radarr root folders.
-pub async fn sync_root_folders(state: &AppState, kind: Kind) -> Result<usize> {
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncResult {
+    /// Names of libraries created by this sync.
+    pub added: Vec<String>,
+    /// Root folders that already are, or lie inside, a library.
+    pub existing: usize,
+    /// Root folders that could not be added, with the reason.
+    pub skipped: Vec<String>,
+}
+
+/// Create a library for every root folder that is not yet covered by one. New libraries are
+/// scanned right away; existing ones keep their settings and only get their link refreshed.
+pub async fn sync_root_folders(state: &AppState, kind: Kind) -> Result<SyncResult> {
     let client = Client::from_state(state, kind).await?;
     let folders = client.root_folders().await?;
-    let mut created = 0;
+    let category = match kind {
+        Kind::Sonarr => "series",
+        Kind::Radarr => "movies",
+    };
+    let mut result = SyncResult::default();
     for f in &folders {
         let local = map_path(&client.settings.path_mappings, &f.path);
         let local = local.trim_end_matches('/').to_string();
+        let local = if local.is_empty() { "/".to_string() } else { local };
+        let libs: Vec<(i64, String)> = sqlx::query_as("SELECT id, path FROM libraries").fetch_all(&state.pool).await?;
+        if let Some((id, _)) = libs.iter().find(|(_, p)| *p == local) {
+            sqlx::query(
+                "UPDATE libraries SET servarr_kind = ?, servarr_root_folder_id = ?, servarr_root_folder_path = ?, last_synced_at = ? WHERE id = ?",
+            )
+            .bind(kind.as_str())
+            .bind(f.id)
+            .bind(&f.path)
+            .bind(now())
+            .bind(id)
+            .execute(&state.pool)
+            .await?;
+            result.existing += 1;
+            continue;
+        }
+        // Overlapping libraries would claim the same files twice.
+        if libs.iter().any(|(_, p)| repo::path_is_under(&local, p) || repo::path_is_under(p, &local)) {
+            result.existing += 1;
+            continue;
+        }
+        if !tokio::fs::metadata(&local).await.map(|m| m.is_dir()).unwrap_or(false) {
+            let hint = if local == f.path { "; add a path mapping if Optimarr mounts it elsewhere" } else { "" };
+            result.skipped.push(format!("{local} is not accessible{hint}"));
+            continue;
+        }
         let name = std::path::Path::new(&local).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| local.clone());
-        let category = match kind {
-            Kind::Sonarr => "series",
-            Kind::Radarr => "movies",
-        };
-        let res = sqlx::query(
+        let name = format!("{} ({})", name, kind.label());
+        let id: i64 = sqlx::query_scalar(
             "INSERT INTO libraries (name, path, category, servarr_kind, servarr_root_folder_id, servarr_root_folder_path, created_at, last_synced_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(path) DO UPDATE SET servarr_kind = excluded.servarr_kind,
-                servarr_root_folder_id = excluded.servarr_root_folder_id,
-                servarr_root_folder_path = excluded.servarr_root_folder_path,
-                last_synced_at = excluded.last_synced_at",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         )
-        .bind(format!("{} ({})", name, kind.label()))
+        .bind(&name)
         .bind(&local)
         .bind(category)
         .bind(kind.as_str())
@@ -298,14 +336,17 @@ pub async fn sync_root_folders(state: &AppState, kind: Kind) -> Result<usize> {
         .bind(&f.path)
         .bind(now())
         .bind(now())
-        .execute(&state.pool)
+        .fetch_one(&state.pool)
         .await?;
-        if res.rows_affected() > 0 {
-            created += 1;
+        repo::attach_orphan_files(&state.pool, id, &local).await?;
+        if let Err(e) = scanner::start_library_scan(state, id, false).await {
+            tracing::warn!("could not start scan of {name}: {e:#}");
         }
+        tracing::info!(path = %local, "added library {name} from {}", kind.label());
+        result.added.push(name);
     }
     state.jobs.emit(Event::LibrariesChanged);
-    Ok(created)
+    Ok(result)
 }
 
 /// Link analyzed files to Sonarr episodes / Radarr movies.

@@ -102,8 +102,16 @@ pub async fn put_servarr(State(state): State<AppState>, Path(kind): Path<String>
         return Err(bad_request("URL and API key are required to enable the integration"));
     }
     s.path_mappings.retain(|m| !m.remote.trim().is_empty() && !m.local.trim().is_empty());
+    // A newly added (or re-pointed) connection brings its root folders in as libraries.
+    let connected = s.enabled && (!old.enabled || old.base_url != s.base_url || old.api_key != s.api_key || old.path_mappings != s.path_mappings);
     servarr::save_settings(&state, kind, s).await?;
-    Ok(Json(json!({ "ok": true })))
+    if !connected {
+        return Ok(Json(json!({ "ok": true })));
+    }
+    Ok(Json(match servarr::sync_root_folders(&state, kind).await {
+        Ok(r) => json!({ "ok": true, "librariesAdded": r.added, "librariesSkipped": r.skipped }),
+        Err(e) => json!({ "ok": true, "librarySyncError": format!("{e:#}") }),
+    }))
 }
 
 pub async fn get_jellyfin(State(state): State<AppState>) -> ApiResult<Json<JellyfinSettings>> {

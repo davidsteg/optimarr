@@ -5,6 +5,21 @@ All notable changes to Optimarr are documented here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each `## [x.y.z]` section becomes the
 notes of the GitHub Release for tag `vx.y.z`.
 
+## [Unreleased]
+
+### Added
+
+- Saving a new Sonarr or Radarr connection now adds each of its root folders as a library
+  (series for Sonarr, movies for Radarr) and starts scanning it. Root folders that already are, or
+  lie inside, a library are left alone, and folders Optimarr cannot reach are reported so you can
+  add a path mapping. This also runs when the URL, API key or path mappings change.
+
+### Changed
+
+- **Sync Sonarr / Sync Radarr** on the Libraries page now only adds root folders that are not yet
+  covered by a library, scans the new libraries right away, and tells you which folders it added
+  or skipped.
+
 ## [2.0.1] - 2026-10-17
 
 ### Fixed
