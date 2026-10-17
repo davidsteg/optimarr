@@ -5,6 +5,14 @@ All notable changes to Optimarr are documented here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each `## [x.y.z]` section becomes the
 notes of the GitHub Release for tag `vx.y.z`.
 
+## [2.0.1] - 2026-10-17
+
+### Fixed
+
+- The dashboard and every page that loads it failed with "mismatched types; Rust type `f64` … is
+  not compatible with SQL type `INTEGER`" while no media had been scanned yet, for example right
+  after upgrading from 1.x or on a fresh install.
+
 ## [2.0.0] - 2026-10-13
 
 Optimarr 2 is a complete rewrite in Rust with a new web UI. It is a single binary with the UI
