@@ -22,19 +22,25 @@ async fn buckets(state: &AppState, expr: &str, filter: &str) -> sqlx::Result<Vec
     .await
 }
 
+type Totals = (i64, i64, f64, Option<f64>, Option<f64>, i64, i64, i64, i64);
+
+// The duration fallback must be 0.0: SUM over no rows is NULL, and an INTEGER 0 does not decode as f64.
+async fn totals(pool: &sqlx::SqlitePool) -> sqlx::Result<Totals> {
+    sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(size),0), COALESCE(SUM(duration),0.0),
+            AVG(CASE WHEN status='ok' THEN compat_score END), AVG(CASE WHEN status='ok' THEN quality_score END),
+            COALESCE(SUM(status='broken'),0), COALESCE(SUM(status='processing'),0),
+            (SELECT COUNT(*) FROM media_files WHERE status='missing'),
+            COALESCE(SUM(EXISTS (SELECT 1 FROM json_each(media_files.issues) WHERE json_extract(value,'$.code') IN ('container','codec_tag','fast_start'))
+                AND NOT EXISTS (SELECT 1 FROM json_each(media_files.issues) WHERE json_extract(value,'$.code') IN ('video_codec','bit_depth'))), 0)
+         FROM media_files WHERE status != 'missing'",
+    )
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn overview(State(state): State<AppState>) -> ApiResult<Json<Value>> {
-    let (files, size, duration, avg_compat, avg_quality, broken, processing, missing, fixable): (i64, i64, f64, Option<f64>, Option<f64>, i64, i64, i64, i64) =
-        sqlx::query_as(
-            "SELECT COUNT(*), COALESCE(SUM(size),0), COALESCE(SUM(duration),0),
-                AVG(CASE WHEN status='ok' THEN compat_score END), AVG(CASE WHEN status='ok' THEN quality_score END),
-                COALESCE(SUM(status='broken'),0), COALESCE(SUM(status='processing'),0),
-                (SELECT COUNT(*) FROM media_files WHERE status='missing'),
-                COALESCE(SUM(EXISTS (SELECT 1 FROM json_each(media_files.issues) WHERE json_extract(value,'$.code') IN ('container','codec_tag','fast_start'))
-                    AND NOT EXISTS (SELECT 1 FROM json_each(media_files.issues) WHERE json_extract(value,'$.code') IN ('video_codec','bit_depth'))), 0)
-             FROM media_files WHERE status != 'missing'",
-        )
-        .fetch_one(&state.pool)
-        .await?;
+    let (files, size, duration, avg_compat, avg_quality, broken, processing, missing, fixable) = totals(&state.pool).await?;
 
     let compat = buckets(&state, "compat_verdict", "").await?;
     let quality = buckets(&state, "quality_verdict", "").await?;
@@ -103,4 +109,14 @@ pub async fn overview(State(state): State<AppState>) -> ApiResult<Json<Value>> {
         "playback30d": { "plays": plays, "transcodes": transcodes },
         "recentJobs": jobs,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn totals_on_empty_library() {
+        let pool = crate::db::open_memory().await.unwrap();
+        let (files, size, duration, avg_compat, ..) = super::totals(&pool).await.unwrap();
+        assert_eq!((files, size, duration, avg_compat), (0, 0, 0.0, None));
+    }
 }
