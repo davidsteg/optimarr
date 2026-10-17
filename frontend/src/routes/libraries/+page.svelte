@@ -113,8 +113,10 @@
 
 	async function sync(kind: 'sonarr' | 'radarr') {
 		try {
-			const r = await api.post<{ synced: number }>(`/integrations/servarr/${kind}/sync-libraries`);
-			toasts.success(`${r.synced} root folders synced from ${kind === 'sonarr' ? 'Sonarr' : 'Radarr'}`);
+			const r = await api.post<{ added: string[]; existing: number; skipped: string[] }>(`/integrations/servarr/${kind}/sync-libraries`);
+			const label = kind === 'sonarr' ? 'Sonarr' : 'Radarr';
+			toasts.success(r.added.length ? `Added ${r.added.join(', ')} from ${label}` : `All ${label} root folders are already libraries`);
+			for (const s of r.skipped) toasts.error(`Root folder skipped: ${s}`);
 			load();
 		} catch (err) {
 			toasts.error(err);

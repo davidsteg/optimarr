@@ -177,8 +177,17 @@
 	async function save(path: string, body: unknown, message = 'Settings saved') {
 		saving = true;
 		try {
-			const r = await api.put<{ jobId?: number; restartRequired?: boolean }>(path, body);
+			const r = await api.put<{
+				jobId?: number;
+				restartRequired?: boolean;
+				librariesAdded?: string[];
+				librariesSkipped?: string[];
+				librarySyncError?: string;
+			}>(path, body);
 			toasts.success(r.jobId ? `${message}; re-scoring all files` : r.restartRequired ? `${message}; some changes apply after a restart` : message);
+			if (r.librariesAdded?.length) toasts.success(`Added ${r.librariesAdded.length === 1 ? 'library' : 'libraries'} ${r.librariesAdded.join(', ')}`);
+			for (const s of r.librariesSkipped ?? []) toasts.error(`Root folder skipped: ${s}`);
+			if (r.librarySyncError) toasts.error(`Could not add root folders as libraries: ${r.librarySyncError}`);
 			return true;
 		} catch (e) {
 			toasts.error(e);
