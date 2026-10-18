@@ -98,7 +98,7 @@
 {#if needKey}
 	<div class="gate">
 		<form class="card card-pad stack" onsubmit={submitKey}>
-			<div class="brand big"><span class="logo"><Icon name="bolt" size={18} /></span>Optimarr</div>
+			<div class="brand big"><img class="logo" src="/favicon.svg" alt="" />Optimarr</div>
 			<p class="muted" style="margin:0">
 				This server needs an API key. You can find it in <strong>Settings → Security</strong> on a trusted network, in the
 				server log, or set it with <code>OPTIMARR_API_KEY</code>.
@@ -114,7 +114,7 @@
 {:else}
 	<div class="shell">
 		<aside class="sidebar" class:open={navOpen}>
-			<a class="brand" href="/"><span class="logo"><Icon name="bolt" size={16} /></span>Optimarr</a>
+			<a class="brand" href="/"><img class="logo" src="/favicon.svg" alt="" />Optimarr</a>
 			<nav>
 				{#each nav as item (item.href)}
 					<a href={item.href} class:active={isActive(item.href)}>
@@ -150,7 +150,7 @@
 		<main>
 			<div class="topbar">
 				<button class="btn ghost icon" onclick={() => (navOpen = true)} aria-label="Open menu"><Icon name="menu" /></button>
-				<span class="brand"><span class="logo"><Icon name="bolt" size={14} /></span>Optimarr</span>
+				<span class="brand"><img class="logo" src="/favicon.svg" alt="" />Optimarr</span>
 			</div>
 			<div class="content">
 				{#if ready}
@@ -200,13 +200,9 @@
 		padding: 0;
 	}
 	.logo {
-		display: grid;
-		place-items: center;
+		display: block;
 		width: 28px;
 		height: 28px;
-		border-radius: 8px;
-		background: linear-gradient(135deg, var(--accent), #0ea5e9);
-		color: #04140f;
 	}
 	nav {
 		display: flex;
