@@ -90,13 +90,12 @@ image on Docker Hub, `davidsteg/optimarr:<version>` and `:latest`. The same imag
 `ghcr.io/davidsteg/optimarr`.
 
 To cut a release: bump the version in `VERSION`, `backend/Cargo.toml` and `frontend/package.json`,
-add a `## [x.y.z]` section to `CHANGELOG.md`, merge to master, then tag it:
+add a `## [x.y.z]` section to `CHANGELOG.md` and merge to master. The release workflow sees that
+the version has no tag yet, checks the versions, runs the tests, pushes the image, then creates the
+`vx.y.z` tag and publishes the release. Merges that don't change the version publish nothing.
 
-```bash
-git tag v2.0.0 && git push origin v2.0.0
-```
-
-The release workflow checks the versions, runs the tests, pushes the image and publishes the release.
+To publish a version that was missed, run the Release workflow by hand under Actions with the tag
+and the commit to tag.
 
 ## Security
 

@@ -1,29 +1,42 @@
 name: Release
 
-# Push a tag like v2.0.0 to publish a release:
-#   1. the version is checked against VERSION and backend/Cargo.toml,
-#   2. tests run,
-#   3. an amd64 image is pushed to Docker Hub (davidsteg/optimarr) and ghcr.io/<owner>/optimarr
-#      with the version tags and latest,
-#   4. a GitHub Release is created with the matching CHANGELOG.md section as its notes.
+# A release is published whenever master carries a version that has no tag yet. To cut one, bump
+# the version in VERSION, backend/Cargo.toml and frontend/package.json, add a `## [x.y.z]` section
+# to CHANGELOG.md and merge to master. The workflow then
+#   1. checks the version against VERSION, backend/Cargo.toml, frontend/package.json and CHANGELOG.md,
+#   2. runs the tests,
+#   3. pushes an amd64 image to Docker Hub (davidsteg/optimarr) and ghcr.io/<owner>/optimarr with the
+#      version tags, plus latest when it is the highest version,
+#   4. creates the vX.Y.Z tag and a GitHub Release with the matching CHANGELOG.md section as notes.
+# Pushes to master whose version is already tagged do nothing.
 #
-# To publish an existing tag again (for example after adding a registry), run the workflow by hand
-# under Actions and give the tag. An existing GitHub Release is left as it is.
+# Pushing a tag like v2.0.0 by hand still publishes that tag. To publish a version that was missed,
+# or to publish an existing tag again (for example after adding a registry), run the workflow by
+# hand under Actions, give the tag and, if the tag does not exist yet, the commit to tag. An
+# existing GitHub Release is left as it is.
 #
 # Docker Hub needs the repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access token
 # with read and write scope).
 
 on:
   push:
+    branches: [master]
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to publish, like v2.0.0
+        description: Version tag to publish, like v2.0.0
         required: true
+      commit:
+        description: Commit to tag if the tag does not exist yet (defaults to the chosen branch)
+        required: false
+
+# Runs for the same branch or tag queue up, so two quick merges cannot publish the same version twice.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
-  TAG: ${{ inputs.tag || github.ref_name }}
   DOCKERHUB_IMAGE: davidsteg/optimarr
 
 permissions:
@@ -31,21 +44,79 @@ permissions:
   packages: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.target.outputs.publish }}
+      tag: ${{ steps.target.outputs.tag }}
+      ref: ${{ steps.target.outputs.ref }}
+      latest: ${{ steps.target.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: target
+        name: Pick the version to publish
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_COMMIT: ${{ inputs.commit }}
+        run: |
+          case "$EVENT" in
+            workflow_dispatch) tag="$INPUT_TAG" ;;
+            push)
+              if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+                tag="$GITHUB_REF_NAME"
+              else
+                tag="v$(tr -d '[:space:]' < VERSION)"
+              fi
+              ;;
+          esac
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::$tag is not a version tag like v2.0.0"
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            if [ "$EVENT" = push ] && [[ "$GITHUB_REF" != refs/tags/* ]]; then
+              echo "$tag is already tagged, nothing to release"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            ref="$(git rev-parse "refs/tags/$tag^{commit}")"
+          elif [ "$EVENT" = workflow_dispatch ] && [ -n "$INPUT_COMMIT" ]; then
+            ref="$(git rev-parse --verify "$INPUT_COMMIT^{commit}")"
+          else
+            ref="$GITHUB_SHA"
+          fi
+
+          # Only the highest version gets the latest image tag and the latest GitHub Release.
+          highest="$({ git tag --list 'v[0-9]*.[0-9]*.[0-9]*'; echo "$tag"; } | sort -V | tail -n1)"
+          if [ "$highest" = "$tag" ]; then latest=true; else latest=false; fi
+
+          echo "Publishing $tag from $ref (latest: $latest)"
+          {
+            echo "publish=true"
+            echo "tag=$tag"
+            echo "ref=$ref"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+
   verify:
     runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ env.TAG }}
+          ref: ${{ needs.prepare.outputs.ref }}
       - id: version
         name: Check version numbers
         run: |
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::$TAG is not a version tag like v2.0.0"
-            exit 1
-          fi
           version="${TAG#v}"
           file_version="$(tr -d '[:space:]' < VERSION)"
           cargo_version="$(grep -m1 '^version' backend/Cargo.toml | cut -d '"' -f2)"
@@ -71,11 +142,13 @@ jobs:
 
   image:
     runs-on: ubuntu-latest
-    needs: verify
+    needs: [prepare, verify]
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ env.TAG }}
+          ref: ${{ needs.prepare.outputs.ref }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -96,7 +169,7 @@ jobs:
             type=semver,pattern={{version}},value=${{ env.TAG }}
             type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
             type=semver,pattern={{major}},value=${{ env.TAG }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.latest }}
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -109,15 +182,18 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: [verify, image]
+    needs: [prepare, verify, image]
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ env.TAG }}
+          ref: ${{ needs.prepare.outputs.ref }}
       - name: Write release notes
         env:
           VERSION: ${{ needs.verify.outputs.version }}
           GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/optimarr
+          LATEST: ${{ needs.prepare.outputs.latest }}
         run: |
           # The CHANGELOG section for this version, without its heading.
           awk -v v="$VERSION" '
@@ -133,15 +209,23 @@ jobs:
             echo "docker pull ${DOCKERHUB_IMAGE}:${VERSION}"
             echo '```'
             echo
-            echo "Also on GHCR as \`${GHCR_IMAGE,,}:${VERSION}\`. Both are tagged \`latest\`. Platform: linux/amd64."
+            if [ "$LATEST" = true ]; then
+              echo "Also on GHCR as \`${GHCR_IMAGE,,}:${VERSION}\`. Both are tagged \`latest\`. Platform: linux/amd64."
+            else
+              echo "Also on GHCR as \`${GHCR_IMAGE,,}:${VERSION}\`. Platform: linux/amd64."
+            fi
           } >> notes.md
           cat notes.md
-      - name: Create GitHub Release
+      - name: Create the tag and GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ needs.prepare.outputs.ref }}
+          LATEST: ${{ needs.prepare.outputs.latest }}
         run: |
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "Release $TAG already exists, leaving it as it is"
           else
-            gh release create "$TAG" --title "Optimarr ${TAG}" --notes-file notes.md --verify-tag
+            # Creates the tag on $REF when it does not exist yet.
+            gh release create "$TAG" --title "Optimarr ${TAG}" --notes-file notes.md \
+              --target "$REF" --latest="$LATEST"
           fi
