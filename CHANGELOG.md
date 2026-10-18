@@ -3,9 +3,14 @@
 All notable changes to Optimarr are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each `## [x.y.z]` section becomes the
-notes of the GitHub Release for tag `vx.y.z`.
+notes of the GitHub Release for tag `vx.y.z`; see [docs/RELEASING.md](docs/RELEASING.md).
+
+## [Unreleased]
 
 ## [2.2.0] - 2026-10-18
+
+Playback history now comes from Jellystat, so transcode details show up for every play, including
+plays from before Optimarr was running. You need a Jellystat instance; see Upgrading below.
 
 ### Changed
 
