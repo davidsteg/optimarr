@@ -67,7 +67,7 @@
 		basicAuthPassword: string | null;
 		pathMappings: PathMapping[];
 	}
-	interface Jellyfin {
+	interface Jellystat {
 		enabled: boolean;
 		baseUrl: string;
 		apiKey: string;
@@ -95,7 +95,7 @@
 		{ id: 'quality', label: 'Quality' },
 		{ id: 'sonarr', label: 'Sonarr' },
 		{ id: 'radarr', label: 'Radarr' },
-		{ id: 'jellyfin', label: 'Jellyfin' },
+		{ id: 'jellystat', label: 'Jellystat' },
 		{ id: 'devices', label: 'Devices' },
 		{ id: 'fixes', label: 'Fixes & upgrades' },
 		{ id: 'notifications', label: 'Notifications' },
@@ -109,7 +109,7 @@
 	let compat = $state<Compat | null>(null);
 	let quality = $state<Quality | null>(null);
 	let servarr = $state<Record<'sonarr' | 'radarr', Servarr | null>>({ sonarr: null, radarr: null });
-	let jellyfin = $state<Jellyfin | null>(null);
+	let jellystat = $state<Jellystat | null>(null);
 	let security = $state<Security | null>(null);
 	let status = $state<Status | null>(null);
 	let fixSettings = $state<FixSettings | null>(null);
@@ -159,8 +159,8 @@
 					servarr[t] = { ...s, basicAuthUsername: s.basicAuthUsername ?? '', basicAuthPassword: s.basicAuthPassword ?? '' };
 					break;
 				}
-				case 'jellyfin':
-					jellyfin = await api.get('/settings/jellyfin');
+				case 'jellystat':
+					jellystat = await api.get('/settings/jellystat');
 					break;
 				case 'security':
 					security = await api.get('/system/security');
@@ -183,11 +183,13 @@
 				librariesAdded?: string[];
 				librariesSkipped?: string[];
 				librarySyncError?: string;
+				importing?: boolean;
 			}>(path, body);
 			toasts.success(r.jobId ? `${message}; re-scoring all files` : r.restartRequired ? `${message}; some changes apply after a restart` : message);
 			if (r.librariesAdded?.length) toasts.success(`Added ${r.librariesAdded.length === 1 ? 'library' : 'libraries'} ${r.librariesAdded.join(', ')}`);
 			for (const s of r.librariesSkipped ?? []) toasts.error(`Root folder skipped: ${s}`);
 			if (r.librarySyncError) toasts.error(`Could not add root folders as libraries: ${r.librarySyncError}`);
+			if (r.importing) toasts.success('Importing the last 90 days of playback from Jellystat');
 			return true;
 		} catch (e) {
 			toasts.error(e);
@@ -229,19 +231,12 @@
 		}
 	}
 
-	async function testJellyfin() {
-		if (!jellyfin) return;
+	async function testJellystat() {
+		if (!jellystat) return;
 		testResult = null;
 		try {
-			const r = await api.post<{ ok: boolean; info?: { serverName?: string; version?: string; playbackReporting?: boolean }; error?: string }>(
-				'/integrations/jellyfin/test',
-				jellyfin
-			);
-			testResult = r.ok
-				? r.info?.playbackReporting === false
-					? { ok: false, text: `Connected to ${r.info?.serverName ?? 'Jellyfin'}, but the Playback Reporting plugin is not installed, so no history can be read` }
-					: { ok: true, text: `Connected to ${r.info?.serverName ?? 'Jellyfin'}${r.info?.version ? ` ${r.info.version}` : ''}` }
-				: { ok: false, text: r.error ?? 'Connection failed' };
+			const r = await api.post<{ ok: boolean; error?: string }>('/integrations/jellystat/test', jellystat);
+			testResult = r.ok ? { ok: true, text: 'Connected to Jellystat' } : { ok: false, text: r.error ?? 'Connection failed' };
 		} catch (e) {
 			testResult = { ok: false, text: e instanceof Error ? e.message : String(e) };
 		}
@@ -495,25 +490,26 @@
 					</div>
 				</form>
 			{/if}
-		{:else if tab === 'jellyfin'}
-			{#if jellyfin}
-				{@const j = jellyfin}
+		{:else if tab === 'jellystat'}
+			{#if jellystat}
+				{@const j = jellystat}
 				<form
 					class="card card-pad stack"
 					onsubmit={(e) => {
 						e.preventDefault();
-						save('/settings/jellyfin', j);
+						save('/settings/jellystat', j);
 					}}
 				>
 					<div>
-						<h2>Jellyfin</h2>
+						<h2>Jellystat</h2>
 						<p class="muted small" style="margin:4px 0 0">
-							Reads playback history from the Playback Reporting plugin so you can see which files get transcoded and why.
+							Reads Jellyfin playback history from Jellystat so you can see which files get transcoded and why. Saving a new connection
+							imports the last 90 days.
 						</p>
 					</div>
 					<Switch bind:checked={j.enabled} label="Enabled" />
-					<label class="field">URL<input type="url" bind:value={j.baseUrl} placeholder="http://jellyfin:8096" /></label>
-					<label class="field">API key <span class="hint">Dashboard → API Keys in Jellyfin</span><input type="password" bind:value={j.apiKey} autocomplete="off" /></label>
+					<label class="field">URL<input type="url" bind:value={j.baseUrl} placeholder="http://jellystat:3000" /></label>
+					<label class="field">API key <span class="hint">Settings → API Keys in Jellystat</span><input type="password" bind:value={j.apiKey} autocomplete="off" /></label>
 					<label class="field">
 						Sync every (minutes) <span class="hint">0 turns off background sync</span>
 						<input type="number" min="0" bind:value={j.syncIntervalMinutes} />
@@ -526,7 +522,7 @@
 					{#if testResult}<p class="result" class:ok={testResult.ok}>{testResult.text}</p>{/if}
 					<div class="row wrap">
 						<button class="btn primary" disabled={saving}>Save</button>
-						<button type="button" class="btn" onclick={testJellyfin}><Icon name="check" size={15} />Test</button>
+						<button type="button" class="btn" onclick={testJellystat}><Icon name="check" size={15} />Test</button>
 					</div>
 				</form>
 			{/if}

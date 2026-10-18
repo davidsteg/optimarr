@@ -208,7 +208,7 @@ Neither parameter gives `400`. A title with no matches gives `{"matches": []}`.
 ### GET /api/agent/transcodes
 
 Files that Jellyfin transcoded during playback, most transcodes first (up to 20). Requires the
-Jellyfin integration.
+Jellystat integration.
 
 | Name | Description |
 | --- | --- |
