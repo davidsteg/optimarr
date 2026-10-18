@@ -51,6 +51,8 @@ jobs:
       tag: ${{ steps.target.outputs.tag }}
       ref: ${{ steps.target.outputs.ref }}
       latest: ${{ steps.target.outputs.latest }}
+      latest_minor: ${{ steps.target.outputs.latest_minor }}
+      previous: ${{ steps.target.outputs.previous }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,16 +92,23 @@ jobs:
             ref="$GITHUB_SHA"
           fi
 
-          # Only the highest version gets the latest image tag and the latest GitHub Release.
-          highest="$({ git tag --list 'v[0-9]*.[0-9]*.[0-9]*'; echo "$tag"; } | sort -V | tail -n1)"
-          if [ "$highest" = "$tag" ]; then latest=true; else latest=false; fi
+          # Floating image tags only ever move forward: latest and X follow the highest version, X.Y
+          # the highest patch of that minor version. Publishing an older version leaves them alone.
+          tags="$({ git tag --list 'v[0-9]*.[0-9]*.[0-9]*'; echo "$tag"; } | sort -uV)"
+          minor="${tag%.*}"
+          if [ "$(tail -n1 <<< "$tags")" = "$tag" ]; then latest=true; else latest=false; fi
+          if [ "$(grep -F "$minor." <<< "$tags" | tail -n1)" = "$tag" ]; then latest_minor=true; else latest_minor=false; fi
+          # The version released before this one, for the compare link in the release notes.
+          previous="$(grep -B1 -x -F "$tag" <<< "$tags" | grep -v -x -F "$tag" || true)"
 
-          echo "Publishing $tag from $ref (latest: $latest)"
+          echo "Publishing $tag from $ref (latest: $latest, latest $minor: $latest_minor, previous: ${previous:-none})"
           {
             echo "publish=true"
             echo "tag=$tag"
             echo "ref=$ref"
             echo "latest=$latest"
+            echo "latest_minor=$latest_minor"
+            echo "previous=$previous"
           } >> "$GITHUB_OUTPUT"
 
   verify:
@@ -127,8 +136,17 @@ jobs:
               exit 1
             fi
           done
-          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no section for $version"
+          if ! grep -q "^## \[$version\] - [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section headed '## [$version] - YYYY-MM-DD'"
+            exit 1
+          fi
+          notes="$(awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md)"
+          if ! grep -q '^- ' <<< "$notes"; then
+            echo "::error::The CHANGELOG.md section for $version lists no changes"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -167,8 +185,8 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/optimarr
           tags: |
             type=semver,pattern={{version}},value=${{ env.TAG }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
-            type=semver,pattern={{major}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }},enable=${{ needs.prepare.outputs.latest_minor }}
+            type=semver,pattern={{major}},value=${{ env.TAG }},enable=${{ needs.prepare.outputs.latest }}
             type=raw,value=latest,enable=${{ needs.prepare.outputs.latest }}
       - uses: docker/build-push-action@v6
         with:
@@ -179,6 +197,20 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Check the pushed images
+        env:
+          IMAGES: ${{ steps.meta.outputs.tags }}
+        run: |
+          while read -r image; do
+            [ -n "$image" ] || continue
+            platforms="$(docker buildx imagetools inspect "$image" --format '{{json .Manifest}}' \
+              | jq -r '[.manifests[]?.platform | select(.os != "unknown") | "\(.os)/\(.architecture)"] | join(",")')"
+            echo "$image: ${platforms:-single manifest}"
+            if [ -n "$platforms" ] && [ "$platforms" != linux/amd64 ]; then
+              echo "::error::$image is built for $platforms, expected linux/amd64 only"
+              exit 1
+            fi
+          done <<< "$IMAGES"
 
   release:
     runs-on: ubuntu-latest
@@ -194,6 +226,7 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
           GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/optimarr
           LATEST: ${{ needs.prepare.outputs.latest }}
+          PREVIOUS: ${{ needs.prepare.outputs.previous }}
         run: |
           # The CHANGELOG section for this version, without its heading.
           awk -v v="$VERSION" '
@@ -214,6 +247,10 @@ jobs:
             else
               echo "Also on GHCR as \`${GHCR_IMAGE,,}:${VERSION}\`. Platform: linux/amd64."
             fi
+            if [ -n "$PREVIOUS" ]; then
+              echo
+              echo "**Full changelog:** https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS}...${TAG}"
+            fi
           } >> notes.md
           cat notes.md
       - name: Create the tag and GitHub Release
@@ -228,4 +265,22 @@ jobs:
             # Creates the tag on $REF when it does not exist yet.
             gh release create "$TAG" --title "Optimarr ${TAG}" --notes-file notes.md \
               --target "$REF" --latest="$LATEST"
+          fi
+      - name: Check the tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ needs.prepare.outputs.ref }}
+        run: |
+          # Never move a tag: if it already pointed somewhere else, stop and say so.
+          git fetch --quiet --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          tagged="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          if [ "$tagged" != "$REF" ]; then
+            echo "::error::$TAG points at $tagged, not at the released commit $REF"
+            exit 1
+          fi
+          state="$(gh release view "$TAG" --json isDraft,url --jq '"\(.url) draft=\(.isDraft)"')"
+          echo "$TAG -> $tagged, release $state"
+          if [[ "$state" == *draft=true ]]; then
+            echo "::error::The GitHub Release for $TAG is still a draft"
+            exit 1
           fi
