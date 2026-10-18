@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="optimarr-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="0.55" stop-color="#10b981"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#optimarr-bg)"/>
+  <path d="M18.56 47.44A19 19 0 1 1 45.44 47.44" fill="none" stroke="#052e22" stroke-opacity="0.25" stroke-width="5" stroke-linecap="round"/>
+  <path d="M18.56 47.44A19 19 0 1 1 49.22 25.97" fill="none" stroke="#052e22" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="49.22" cy="25.97" r="3.4" fill="#ecfdf5"/>
+  <path d="M27.5 25.2v17.6a1.5 1.5 0 0 0 2.27 1.29l14.5-8.8a1.5 1.5 0 0 0 0-2.58l-14.5-8.8a1.5 1.5 0 0 0-2.27 1.29z" fill="#052e22"/>
+</svg>

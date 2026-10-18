@@ -7,6 +7,18 @@ notes of the GitHub Release for tag `vx.y.z`; see [docs/RELEASING.md](docs/RELEA
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-18
+
+Optimarr has a new logo, and the README now shows what each page looks like. Nothing changes in
+how Optimarr works, and there is nothing to do when upgrading.
+
+### Changed
+
+- A new logo: a score gauge around a play button. It replaces the bolt icon in the sidebar, the
+  browser tab icon and the icon used when Optimarr is added to a phone's home screen.
+- The README has screenshots of the dashboard, a file's details, Playback, Devices, the media
+  list, the fix queue and space savings, and a shorter quick start.
+
 ## [2.2.0] - 2026-10-18
 
 Playback history now comes from Jellystat, so transcode details show up for every play, including

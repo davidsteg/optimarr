@@ -1,6 +1,6 @@
 [package]
 name = "optimarr"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2021"
 description = "Media library compatibility and quality analyzer with Sonarr, Radarr, Jellyfin and MCP integration"
 license = "MIT"
