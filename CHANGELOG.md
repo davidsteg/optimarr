@@ -5,7 +5,7 @@ All notable changes to Optimarr are documented here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each `## [x.y.z]` section becomes the
 notes of the GitHub Release for tag `vx.y.z`.
 
-## [Unreleased]
+## [2.1.0] - 2026-10-17
 
 ### Added
 
