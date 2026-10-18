@@ -101,13 +101,13 @@ pub fn router() -> Router<AppState> {
         .route("/api/settings/quality/reset", post(settings::reset_quality))
         .route("/api/settings/general", get(settings::get_general).put(settings::put_general))
         .route("/api/settings/servarr/{kind}", get(settings::get_servarr).put(settings::put_servarr))
-        .route("/api/settings/jellyfin", get(settings::get_jellyfin).put(settings::put_jellyfin))
+        .route("/api/settings/jellystat", get(settings::get_jellystat).put(settings::put_jellystat))
         // integrations
         .route("/api/integrations/servarr/{kind}/test", post(integrations::test_servarr))
         .route("/api/integrations/servarr/{kind}/sync-libraries", post(integrations::sync_libraries))
         .route("/api/integrations/servarr/match", post(integrations::match_files))
-        .route("/api/integrations/jellyfin/test", post(integrations::test_jellyfin))
-        .route("/api/integrations/jellyfin/import", post(integrations::import_jellyfin))
+        .route("/api/integrations/jellystat/test", post(integrations::test_jellystat))
+        .route("/api/integrations/jellystat/import", post(integrations::import_jellystat))
         // playback
         .route("/api/playback", get(playback::list))
         .route("/api/playback/stats", get(playback::stats))

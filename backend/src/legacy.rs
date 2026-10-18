@@ -143,15 +143,6 @@ async fn import_settings(pool: &SqlitePool, path: &Path) -> Result<()> {
     if let Some(s) = v.pointer("/Servarr/Radarr") {
         save(pool, &RadarrSettings(servarr(s))).await?;
     }
-    if let Some(j) = v.get("Jellyfin") {
-        let s = JellyfinSettings {
-            enabled: j.get("Enabled").and_then(Value::as_bool).unwrap_or(false),
-            base_url: j.get("BaseUrl").and_then(Value::as_str).unwrap_or("").into(),
-            api_key: j.get("ApiKey").and_then(Value::as_str).unwrap_or("").into(),
-            ..Default::default()
-        };
-        save(pool, &s).await?;
-    }
     if let Some(key) = v.pointer("/Auth/ApiKey").and_then(Value::as_str).filter(|k| !k.is_empty()) {
         crate::auth::store_key(pool, key).await?;
     }
@@ -336,7 +327,7 @@ async fn import_db(pool: &SqlitePool, path: &Path) -> Result<(usize, usize, usiz
         let mut tx = pool.begin().await?;
         for r in &rows {
             let method = get_s(r, "PlayMethod");
-            let (method, _, _) = crate::integrations::jellyfin::parse_play_method(&method);
+            let (method, _, _) = crate::integrations::jellystat::parse_play_method(&method);
             sqlx::query(
                 "INSERT OR IGNORE INTO playback_events (source_key, jellyfin_item_id, user_id, user_name, item_name, item_type, file_path,
                     started_at, stopped_at, client_name, device_name, device_id, play_method, transcode_reasons, transcode_video_codec,

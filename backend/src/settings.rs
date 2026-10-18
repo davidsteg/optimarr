@@ -194,20 +194,22 @@ pub struct ServarrSettings {
     pub path_mappings: Vec<PathMapping>,
 }
 
+/// Jellystat, the source of Jellyfin playback history.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
-pub struct JellyfinSettings {
+pub struct JellystatSettings {
     pub enabled: bool,
     pub base_url: String,
     pub api_key: String,
+    /// Maps paths as Jellyfin sees them to paths as Optimarr sees them.
     pub path_mappings: Vec<PathMapping>,
     /// Background sync interval. 0 disables the background sync.
     pub sync_interval_minutes: u64,
 }
 
-impl Default for JellyfinSettings {
+impl Default for JellystatSettings {
     fn default() -> Self {
-        Self { enabled: false, base_url: String::new(), api_key: String::new(), path_mappings: Vec::new(), sync_interval_minutes: 60 }
+        Self { enabled: false, base_url: String::new(), api_key: String::new(), path_mappings: Vec::new(), sync_interval_minutes: 5 }
     }
 }
 
@@ -247,8 +249,8 @@ impl SettingsDoc for QualityProfile {
 impl SettingsDoc for GeneralSettings {
     const KEY: &'static str = "general";
 }
-impl SettingsDoc for JellyfinSettings {
-    const KEY: &'static str = "jellyfin";
+impl SettingsDoc for JellystatSettings {
+    const KEY: &'static str = "jellystat";
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

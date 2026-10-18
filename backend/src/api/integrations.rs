@@ -3,10 +3,10 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::settings::{merged_jellyfin, merged_servarr};
+use super::settings::{merged_jellystat, merged_servarr};
 use super::{bad_request, ApiResult};
-use crate::integrations::{jellyfin, servarr};
-use crate::settings::{JellyfinSettings, ServarrSettings};
+use crate::integrations::{jellystat, servarr};
+use crate::settings::{JellystatSettings, ServarrSettings};
 use crate::state::AppState;
 
 fn kind(k: &str) -> ApiResult<servarr::Kind> {
@@ -39,13 +39,13 @@ pub async fn match_files(State(state): State<AppState>) -> ApiResult<Json<Value>
     Ok(Json(json!({ "jobId": servarr::start_match(&state).await? })))
 }
 
-pub async fn test_jellyfin(State(state): State<AppState>, body: Option<Json<JellyfinSettings>>) -> ApiResult<Json<Value>> {
-    let s = merged_jellyfin(&state, body.map(|b| b.0)).await?;
-    if s.base_url.is_empty() || s.api_key.is_empty() {
+pub async fn test_jellystat(State(state): State<AppState>, body: Option<Json<JellystatSettings>>) -> ApiResult<Json<Value>> {
+    let s = merged_jellystat(&state, body.map(|b| b.0)).await?;
+    if s.base_url.trim().is_empty() || s.api_key.trim().is_empty() {
         return Err(bad_request("URL and API key are required"));
     }
-    match jellyfin::Client::new(state.http.clone(), s).info().await {
-        Ok(info) => Ok(Json(json!({ "ok": true, "info": info }))),
+    match jellystat::Client::new(state.http.clone(), s).test().await {
+        Ok(_) => Ok(Json(json!({ "ok": true }))),
         Err(e) => Ok(Json(json!({ "ok": false, "error": format!("{e:#}") }))),
     }
 }
@@ -55,6 +55,10 @@ pub struct ImportQuery {
     days: Option<i64>,
 }
 
-pub async fn import_jellyfin(State(state): State<AppState>, Query(q): Query<ImportQuery>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!({ "jobId": jellyfin::start_history_import(&state, q.days.unwrap_or(90)).await? })))
+pub async fn import_jellystat(State(state): State<AppState>, Query(q): Query<ImportQuery>) -> ApiResult<Json<Value>> {
+    let s = jellystat::load_settings(&state.pool).await?;
+    if !s.enabled {
+        return Err(bad_request("Connect Jellystat under Settings → Jellystat to import playback history"));
+    }
+    Ok(Json(json!({ "jobId": jellystat::start_history_import(&state, q.days.unwrap_or(90)).await? })))
 }

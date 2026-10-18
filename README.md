@@ -17,8 +17,8 @@ database, and live progress in the browser.
   progress is shown live.
 - **Sonarr and Radarr.** Sync root folders as libraries, link files to series and movies, and
   request a replacement for a bad file. Import webhooks trigger a rescan right away.
-- **Jellyfin.** Imports playback history (Playback Reporting plugin) and shows which files are
-  transcoded, on which clients, and why.
+- **Jellyfin playback.** Imports Jellyfin's playback history from [Jellystat](https://github.com/CyferShepard/Jellystat)
+  and shows which files are transcoded, on which clients, and why.
 - **Device profiles.** Describe your TVs, phones and browsers, and see per file and per device whether
   it direct-plays, gets remuxed or gets transcoded, and why.
 - **Fix queue.** Run the suggested ffmpeg fix for one file or hundreds; the result replaces the

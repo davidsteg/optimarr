@@ -5,6 +5,33 @@ All notable changes to Optimarr are documented here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each `## [x.y.z]` section becomes the
 notes of the GitHub Release for tag `vx.y.z`.
 
+## [2.2.0] - 2026-10-18
+
+### Changed
+
+- Playback history now comes from [Jellystat](https://github.com/CyferShepard/Jellystat) instead of
+  the Jellyfin Playback Reporting plugin, and Optimarr no longer connects to Jellyfin itself.
+  Jellystat keeps Jellyfin's transcode details for every play, so transcode reasons, target codecs
+  and hardware acceleration now show up for your whole history, including plays that happened
+  while Optimarr was not running.
+- **Settings → Jellyfin** is now **Settings → Jellystat**. Enter Jellystat's URL and an API key
+  from Jellystat's **Settings → API Keys**. Your path mappings carry over. Saving a new connection
+  imports the last 90 days, and new plays are synced every 5 minutes by default.
+- Plays appear on the Playback page once they have ended and the next sync has run, not while
+  they are still playing.
+
+### Removed
+
+- The Jellyfin connection, the live session sampling and the Playback Reporting import. Plays
+  recorded by earlier versions stay, and when Jellystat has the same play it fills in the missing
+  details instead of adding it twice.
+
+### Upgrading
+
+1. Install Jellystat if you don't have it yet and let it sync with Jellyfin. Jellystat can import
+   your Playback Reporting history with its Playback Reporting import task.
+2. In Optimarr, open **Settings → Jellystat**, enter the URL and API key, and save.
+
 ## [2.1.0] - 2026-10-17
 
 ### Added

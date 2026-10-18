@@ -18,7 +18,7 @@ pub fn spawn_all(state: AppState) {
     spawn_scheduler(state.clone());
     crate::fixer::spawn_worker(state.clone());
     crate::upgrades::spawn_background(state.clone());
-    crate::integrations::jellyfin::spawn_background(state);
+    crate::integrations::jellystat::spawn_background(state);
 }
 
 /// Watches enabled libraries and analyzes new/changed files once they stop growing.

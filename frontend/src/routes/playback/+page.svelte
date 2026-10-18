@@ -52,11 +52,11 @@
 	let pageNo = $state(1);
 	let pageSize = $state(50);
 	let detailId = $state<number | null>(null);
-	let jellyfinEnabled = $state<boolean | null>(null);
+	let jellystatEnabled = $state<boolean | null>(null);
 	let importing = $state(false);
 
 	onMount(() => {
-		api.get<{ enabled: boolean }>('/settings/jellyfin').then((s) => (jellyfinEnabled = s.enabled)).catch(() => (jellyfinEnabled = false));
+		api.get<{ enabled: boolean }>('/settings/jellystat').then((s) => (jellystatEnabled = s.enabled)).catch(() => (jellystatEnabled = false));
 	});
 
 	$effect(() => {
@@ -87,8 +87,8 @@
 	async function importHistory() {
 		importing = true;
 		try {
-			await api.post('/integrations/jellyfin/import', {}, { days: 90 });
-			toasts.success('Importing the last 90 days of Jellyfin playback');
+			await api.post('/integrations/jellystat/import', {}, { days: 90 });
+			toasts.success('Importing the last 90 days of playback from Jellystat');
 		} catch (e) {
 			toasts.error(e);
 		} finally {
@@ -112,17 +112,17 @@
 			<option value={90}>Last 90 days</option>
 			<option value={365}>Last year</option>
 		</select>
-		{#if jellyfinEnabled}
+		{#if jellystatEnabled}
 			<button class="btn" onclick={importHistory} disabled={importing}><Icon name="download" size={15} />Import history</button>
 		{/if}
 	</div>
 </div>
 
-{#if jellyfinEnabled === false && stats && stats.plays === 0}
+{#if jellystatEnabled === false && stats && stats.plays === 0}
 	<div class="card empty">
-		<h3>Jellyfin is not connected</h3>
-		<p>Connect Jellyfin to see which files direct-play and which get transcoded.</p>
-		<a class="btn primary" href="/settings?tab=jellyfin"><Icon name="link" size={15} />Connect Jellyfin</a>
+		<h3>Jellystat is not connected</h3>
+		<p>Connect Jellystat to see which files Jellyfin direct-plays and which it transcodes.</p>
+		<a class="btn primary" href="/settings?tab=jellystat"><Icon name="link" size={15} />Connect Jellystat</a>
 	</div>
 {:else if !stats}
 	<p class="faint">Loading…</p>

@@ -3,9 +3,10 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use super::{bad_request, ApiResult};
+use crate::integrations::jellystat;
 use crate::integrations::servarr::{self, Kind};
 use crate::scanner;
-use crate::settings::{self, CompatibilityProfile, GeneralSettings, JellyfinSettings, QualityProfile, ServarrSettings};
+use crate::settings::{self, CompatibilityProfile, GeneralSettings, JellystatSettings, QualityProfile, ServarrSettings};
 use crate::state::AppState;
 
 pub const MASK: &str = "••••••••";
@@ -114,22 +115,27 @@ pub async fn put_servarr(State(state): State<AppState>, Path(kind): Path<String>
     }))
 }
 
-pub async fn get_jellyfin(State(state): State<AppState>) -> ApiResult<Json<JellyfinSettings>> {
-    let mut s: JellyfinSettings = settings::load(&state.pool).await?;
+pub async fn get_jellystat(State(state): State<AppState>) -> ApiResult<Json<JellystatSettings>> {
+    let mut s = jellystat::load_settings(&state.pool).await?;
     s.api_key = mask(&s.api_key);
     Ok(Json(s))
 }
 
-pub async fn put_jellyfin(State(state): State<AppState>, Json(mut s): Json<JellyfinSettings>) -> ApiResult<Json<Value>> {
-    let old: JellyfinSettings = settings::load(&state.pool).await?;
+pub async fn put_jellystat(State(state): State<AppState>, Json(mut s): Json<JellystatSettings>) -> ApiResult<Json<Value>> {
+    let old = jellystat::load_settings(&state.pool).await?;
     s.api_key = unmask(s.api_key, &old.api_key);
     s.base_url = s.base_url.trim().trim_end_matches('/').to_string();
     if s.enabled && (s.base_url.is_empty() || s.api_key.is_empty()) {
-        return Err(bad_request("URL and API key are required to enable Jellyfin"));
+        return Err(bad_request("URL and API key are required to enable Jellystat"));
     }
     s.path_mappings.retain(|m| !m.remote.trim().is_empty() && !m.local.trim().is_empty());
     settings::save(&state.pool, &s).await?;
-    Ok(Json(json!({ "ok": true })))
+    // A new connection brings in its history right away instead of after the first sync interval.
+    let connected = s.enabled && (!old.enabled || old.base_url != s.base_url || old.api_key != s.api_key);
+    if connected {
+        jellystat::start_history_import(&state, 90).await?;
+    }
+    Ok(Json(json!({ "ok": true, "importing": connected })))
 }
 
 /// For the "test" buttons: settings from the form, falling back to stored secrets.
@@ -145,8 +151,8 @@ pub async fn merged_servarr(state: &AppState, kind: Kind, body: Option<ServarrSe
     })
 }
 
-pub async fn merged_jellyfin(state: &AppState, body: Option<JellyfinSettings>) -> anyhow::Result<JellyfinSettings> {
-    let old: JellyfinSettings = settings::load(&state.pool).await?;
+pub async fn merged_jellystat(state: &AppState, body: Option<JellystatSettings>) -> anyhow::Result<JellystatSettings> {
+    let old = jellystat::load_settings(&state.pool).await?;
     Ok(match body {
         Some(mut s) => {
             s.api_key = unmask(s.api_key, &old.api_key);

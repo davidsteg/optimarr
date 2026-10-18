@@ -1,2 +1,2 @@
-pub mod jellyfin;
+pub mod jellystat;
 pub mod servarr;
