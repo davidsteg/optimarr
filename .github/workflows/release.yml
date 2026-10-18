@@ -183,6 +183,8 @@ jobs:
           images: |
             ${{ env.DOCKERHUB_IMAGE }}
             ghcr.io/${{ github.repository_owner }}/optimarr
+          # Without this, metadata-action adds latest to every version on its own, older ones included.
+          flavor: latest=false
           tags: |
             type=semver,pattern={{version}},value=${{ env.TAG }}
             type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }},enable=${{ needs.prepare.outputs.latest_minor }}
